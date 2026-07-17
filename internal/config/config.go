@@ -14,9 +14,10 @@ type Server struct {
 	Host            string `yaml:"host"`
 	Port            int    `yaml:"port"`
 	User            string `yaml:"user"`
-	Key             string `yaml:"key"`
-	Password        string `yaml:"password"`
-	InsecureHostKey bool   `yaml:"insecure_host_key"`
+	Key             string `yaml:"key,omitempty"`
+	Password        string `yaml:"password,omitempty"`
+	InsecureHostKey bool   `yaml:"insecure_host_key,omitempty"`
+	Group           string `yaml:"group,omitempty"`
 }
 
 func (s Server) Addr() string { return fmt.Sprintf("%s:%d", s.Host, s.Port) }

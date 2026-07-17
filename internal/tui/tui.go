@@ -338,19 +338,32 @@ func (m Model) renderFooter() string {
 
 func (m Model) renderOverview() string {
 	thr := m.cfg.Thresholds
+	hasGroups := false
+	for _, s := range m.snap.Servers {
+		if s.Group != "" {
+			hasGroups = true
+			break
+		}
+	}
+	gcol := func(g string) string {
+		if !hasGroups {
+			return ""
+		}
+		return padR(g, 10) + " "
+	}
 	var b strings.Builder
-	b.WriteString(styDim.Render("  "+padR("СЕРВЕР", 14)+" "+padR("СТАТУС", 6)+" "+padL("CPU", 6)+" "+padL("MEM", 6)+" "+padL("DISK", 6)+" "+padL("NET rx/tx", 16)+" "+padL("LOAD1", 7)+"  ПРОБЛЕМЫ") + "\n")
+	b.WriteString(styDim.Render("  "+padR("СЕРВЕР", 14)+" "+gcol("ГРУППА")+padR("СТАТУС", 6)+" "+padL("CPU", 6)+" "+padL("MEM", 6)+" "+padL("DISK", 6)+" "+padL("NET rx/tx", 16)+" "+padL("LOAD1", 7)+"  ПРОБЛЕМЫ") + "\n")
 	for i, s := range m.snap.Servers {
 		cur := "  "
 		if i == m.sel {
 			cur = "▶ "
 		}
 		if s.Time.IsZero() {
-			b.WriteString(cur + padR(s.Name, 14) + " " + styDim.Render("опрос…") + "\n")
+			b.WriteString(cur + padR(s.Name, 14) + " " + gcol(s.Group) + styDim.Render("опрос…") + "\n")
 			continue
 		}
 		if !s.Online {
-			b.WriteString(cur + padR(s.Name, 14) + " " + styCrit.Render(padR("down", 6)+" "+truncate(s.Err, m.w-30)) + "\n")
+			b.WriteString(cur + padR(s.Name, 14) + " " + gcol(s.Group) + styCrit.Render(padR("down", 6)+" "+truncate(s.Err, m.w-30)) + "\n")
 			continue
 		}
 		var rx, tx float64
@@ -374,7 +387,7 @@ func (m Model) renderOverview() string {
 		if nIssues > 0 {
 			issueStr = styWarn.Render(fmt.Sprintf("%d", nIssues))
 		}
-		b.WriteString(cur + padR(s.Name, 14) + " " + styGood.Render(padR("up", 6)) + " " +
+		b.WriteString(cur + padR(s.Name, 14) + " " + gcol(s.Group) + styGood.Render(padR("up", 6)) + " " +
 			pctCell(s.CPUPct, thr.CPU) + " " + pctCell(s.MemPct, thr.Mem) + " " + pctCell(dmax, thr.Disk) + " " +
 			padL(fmtBytes(rx)+"/"+fmtBytes(tx), 16) + " " + padL(fmt.Sprintf("%.2f", s.Load1), 7) + "  " + issueStr + "\n")
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/kibomibo/sshmon/internal/config"
 	"github.com/kibomibo/sshmon/internal/llm"
 	"github.com/kibomibo/sshmon/internal/mcpsrv"
+	"github.com/kibomibo/sshmon/internal/setup"
 	"github.com/kibomibo/sshmon/internal/tui"
 )
 
@@ -27,16 +28,16 @@ func main() {
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			if werr := config.WriteDefault(*cfgPath); werr != nil {
-				fmt.Fprintf(os.Stderr, "sshmon: %v\nне удалось создать конфиг: %v\n", err, werr)
-			} else {
-				fmt.Fprintf(os.Stderr, "Создан конфиг %s — добавьте свои серверы и запустите sshmon снова.\n", *cfgPath)
+		if errors.Is(err, fs.ErrNotExist) && !*headless {
+			cfg = firstRun(*cfgPath)
+		}
+		if cfg == nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				writeTemplateAndExit(*cfgPath, err)
 			}
+			fmt.Fprintf(os.Stderr, "sshmon: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "sshmon: %v\n", err)
-		os.Exit(1)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -59,4 +60,42 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// firstRun — конфига нет: предлагаем выбрать серверы из ~/.ssh/config.
+// Возвращает загруженный конфиг или nil (тогда вызывающий пишет шаблон).
+func firstRun(cfgPath string) *config.Config {
+	hosts, err := config.ParseSSHConfig(config.DefaultSSHConfigPath())
+	if err != nil || len(hosts) == 0 {
+		return nil // нет ssh-конфига — fallback на шаблон
+	}
+	servers, err := setup.Run(hosts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sshmon: %v\n", err)
+		os.Exit(1)
+	}
+	if len(servers) == 0 {
+		fmt.Fprintln(os.Stderr, "Ничего не выбрано — выход. Конфиг не создан.")
+		os.Exit(1)
+	}
+	if err := config.WriteWithServers(cfgPath, servers); err != nil {
+		fmt.Fprintf(os.Stderr, "sshmon: не удалось создать конфиг: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Создан конфиг %s (%d серверов).\n", cfgPath, len(servers))
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sshmon: %v\n", err)
+		os.Exit(1)
+	}
+	return cfg
+}
+
+func writeTemplateAndExit(cfgPath string, loadErr error) {
+	if werr := config.WriteDefault(cfgPath); werr != nil {
+		fmt.Fprintf(os.Stderr, "sshmon: %v\nне удалось создать конфиг: %v\n", loadErr, werr)
+	} else {
+		fmt.Fprintf(os.Stderr, "Создан конфиг %s — добавьте свои серверы и запустите sshmon снова.\n", cfgPath)
+	}
+	os.Exit(1)
 }

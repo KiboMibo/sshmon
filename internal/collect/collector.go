@@ -26,7 +26,7 @@ type Collector struct {
 func New(cfg *config.Config) *Collector {
 	c := &Collector{cfg: cfg}
 	for _, s := range cfg.Servers {
-		c.states = append(c.states, &serverState{cfg: s, cli: sshx.New(s), m: Metrics{Name: s.Name}})
+		c.states = append(c.states, &serverState{cfg: s, cli: sshx.New(s), m: Metrics{Name: s.Name, Group: s.Group}})
 	}
 	return c
 }
@@ -64,13 +64,13 @@ func (c *Collector) poll(st *serverState) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err != nil {
-		st.m = Metrics{Name: st.cfg.Name, Time: now, Online: false, Err: err.Error()}
+		st.m = Metrics{Name: st.cfg.Name, Group: st.cfg.Group, Time: now, Online: false, Err: err.Error()}
 		st.prev = nil
 		return
 	}
 	s := parseSample(raw, now)
 	m := Metrics{
-		Name: st.cfg.Name, Time: now, Online: true,
+		Name: st.cfg.Name, Group: st.cfg.Group, Time: now, Online: true,
 		Hostname: s.hostname, Uptime: s.uptime,
 		Load1: s.load1, Load5: s.load5, Load15: s.load15,
 		NumCPU:     s.c.ncpu,

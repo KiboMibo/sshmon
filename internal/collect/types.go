@@ -36,6 +36,7 @@ type Port struct {
 
 type Metrics struct {
 	Name     string
+	Group    string
 	Time     time.Time
 	Online   bool
 	Err      string
@@ -71,6 +72,13 @@ type Snapshot struct {
 	Issues  []Issue
 }
 
+func groupTag(g string) string {
+	if g == "" {
+		return ""
+	}
+	return " [" + g + "]"
+}
+
 // Text — текстовое резюме снапшота для system prompt LLM-чата.
 func (s Snapshot) Text() string {
 	var b strings.Builder
@@ -84,7 +92,7 @@ func (s Snapshot) Text() string {
 			fmt.Fprintf(&b, "\n## %s: OFFLINE (%s)\n", m.Name, m.Err)
 			continue
 		}
-		fmt.Fprintf(&b, "\n## %s (hostname %s), uptime %s\n", m.Name, m.Hostname, m.Uptime.Round(time.Minute))
+		fmt.Fprintf(&b, "\n## %s%s (hostname %s), uptime %s\n", m.Name, groupTag(m.Group), m.Hostname, m.Uptime.Round(time.Minute))
 		fmt.Fprintf(&b, "cpu: %.0f%% of %d cores, load %.2f %.2f %.2f\n", m.CPUPct, m.NumCPU, m.Load1, m.Load5, m.Load15)
 		fmt.Fprintf(&b, "mem: %.0f%% used (%d/%d MB), swap free %d/%d MB\n",
 			m.MemPct, (m.MemTotalKB-m.MemAvailKB)/1024, m.MemTotalKB/1024, m.SwapFreeKB/1024, m.SwapTotalKB/1024)
