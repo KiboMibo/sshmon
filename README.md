@@ -22,9 +22,16 @@ go build -o sshmon ./cmd/sshmon
 
 ## Конфигурация
 
-```sh
-mkdir -p ~/.config/sshmon
-cp config.example.yaml ~/.config/sshmon/config.yaml
+Первый запуск сам создаст `~/.config/sshmon/config.yaml` — впишите туда свои
+серверы и запустите снова:
+
+```yaml
+interval: 5s
+servers:
+  - name: web1
+    host: 203.0.113.10
+    user: root
+    key: ~/.ssh/id_ed25519
 ```
 
 Аутентификация: ключ (`key`), ssh-agent или пароль (`password`).

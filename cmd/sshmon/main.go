@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"os/signal"
@@ -25,7 +27,15 @@ func main() {
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "sshmon: %v\nПример конфига: config.example.yaml в репозитории\n", err)
+		if errors.Is(err, fs.ErrNotExist) {
+			if werr := config.WriteDefault(*cfgPath); werr != nil {
+				fmt.Fprintf(os.Stderr, "sshmon: %v\nне удалось создать конфиг: %v\n", err, werr)
+			} else {
+				fmt.Fprintf(os.Stderr, "Создан конфиг %s — добавьте свои серверы и запустите sshmon снова.\n", *cfgPath)
+			}
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "sshmon: %v\n", err)
 		os.Exit(1)
 	}
 
