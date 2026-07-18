@@ -15,13 +15,16 @@ type Model struct {
 	llm       *llm.Client
 	config    *config.Config
 
-	screen   screenKind
-	overlay  overlayKind
-	selected int
-	snapshot collect.Snapshot
-	layout   layoutState
-	request  uint64
-	fleet    fleetModel
+	screen     screenKind
+	overlay    overlayKind
+	selected   int
+	snapshot   collect.Snapshot
+	layout     layoutState
+	request    uint64
+	fleet      fleetModel
+	processes  processScreen
+	ports      portScreen
+	containers containerScreen
 
 	events      <-chan collect.Event
 	unsubscribe func()
@@ -51,6 +54,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitEvent(m.events)
 	case ageTickMsg:
 		return m, ageTick()
+	case processesResultMsg:
+		if msg.generation == m.processes.generation {
+			m.processes.apply(msg.items, msg.err)
+			return m, scheduleDiagnostics(screenProcesses, msg.generation)
+		}
+		return m, nil
+	case portsResultMsg:
+		if msg.generation == m.ports.generation {
+			m.ports.apply(msg.items, msg.err)
+			return m, scheduleDiagnostics(screenPorts, msg.generation)
+		}
+		return m, nil
+	case containersResultMsg:
+		if msg.generation == m.containers.generation {
+			m.containers.apply(msg.items, msg.err)
+			return m, scheduleDiagnostics(screenContainers, msg.generation)
+		}
+		return m, nil
+	case diagnosticsTickMsg:
+		if msg.screen == m.screen && msg.generation == m.diagnosticsGeneration(msg.screen) {
+			return m, m.startDiagnostics()
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -75,15 +101,15 @@ func (m Model) renderScreen() string {
 	case screenDashboard:
 		return m.renderDashboard()
 	case screenProcesses:
-		return m.renderDeepPlaceholder("Процессы")
+		return m.renderProcesses()
 	case screenPorts:
-		return m.renderDeepPlaceholder("Порты")
+		return m.renderPorts()
 	case screenHistory:
 		return m.renderDeepPlaceholder("История")
 	case screenLogs:
 		return m.renderDeepPlaceholder("Логи")
 	case screenContainers:
-		return m.renderDeepPlaceholder("Контейнеры")
+		return m.renderContainers()
 	default:
 		return "sshmon"
 	}

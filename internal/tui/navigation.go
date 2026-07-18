@@ -87,10 +87,14 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "p", "o", "h", "l", "d":
 		if m.screen == screenDashboard {
 			m.screen = dashboardDestination(value)
+			if m.screen == screenProcesses || m.screen == screenPorts || m.screen == screenContainers {
+				return m, m.startDiagnostics()
+			}
 			m.request++
 		}
 	case "esc":
 		if isDeepScreen(m.screen) {
+			m.cancelDiagnostics()
 			m.screen = screenDashboard
 			m.request++
 		} else if m.screen == screenDashboard {
