@@ -86,3 +86,30 @@ func TestLoadMinimal(t *testing.T) {
 		t.Fatalf("interval по умолчанию: %v", c.Interval)
 	}
 }
+
+func TestWriteWithServersOmitsZeroPortAndLoadDefaultsToSSH(t *testing.T) {
+	// Given: an imported SSH host without an explicit Port.
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	servers := []Server{{Name: "web", Host: "10.0.0.1", User: "deploy"}}
+
+	// When: the generated configuration is written.
+	if err := WriteWithServers(path, servers); err != nil {
+		t.Fatalf("WriteWithServers: %v", err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: zero is not serialized and Load still applies SSH port 22.
+	if strings.Contains(string(body), "port: 0") {
+		t.Fatalf("generated YAML contains zero port:\n%s", body)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Servers[0].Port; got != 22 {
+		t.Fatalf("Port=%d, want 22", got)
+	}
+}

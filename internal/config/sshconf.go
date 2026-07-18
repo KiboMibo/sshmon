@@ -54,6 +54,9 @@ func parseSSHFile(path, group string, seen map[string]bool) ([]SSHHost, error) {
 
 	flush := func() {
 		for _, h := range cur {
+			if strings.EqualFold(h.User, "git") {
+				continue
+			}
 			if h.HostName == "" {
 				h.HostName = h.Alias
 			}

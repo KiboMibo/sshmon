@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/kibomibo/sshmon/internal/config"
 )
@@ -371,5 +372,51 @@ func TestCancelAbortsDespiteSelection(t *testing.T) {
 	}
 	if m.done {
 		t.Fatal("cancel must not mark the model as done")
+	}
+}
+
+func TestSolidCheckboxGlyphs(t *testing.T) {
+	// Given: every supported selection state.
+	cases := []struct {
+		state checkState
+		want  string
+	}{
+		{state: stateEmpty, want: "□"},
+		{state: statePartial, want: "▨"},
+		{state: stateChecked, want: "■"},
+	}
+
+	// When/Then: each state renders as a high-contrast solid glyph.
+	for _, tc := range cases {
+		if got := checkGlyph(tc.state); got != tc.want {
+			t.Errorf("checkGlyph(%v)=%q, want %q", tc.state, got, tc.want)
+		}
+	}
+}
+
+func TestRenderRowsHighlightsCheckedAndPartialSelections(t *testing.T) {
+	// Given: an expanded source with one of two hosts selected.
+	oldProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(oldProfile) })
+	m := newModel([]config.SSHHost{
+		{Alias: "prod-a", HostName: "10.0.1.1", Group: "prod", SourcePath: "/ssh/prod.conf", Position: 0},
+		{Alias: "prod-b", HostName: "10.0.1.2", Group: "prod", SourcePath: "/ssh/prod.conf", Position: 1},
+	})
+	m.toggleExpanded(0)
+	m.sources[0].hosts[0].selected = true
+
+	// When: partially selected source and checked host rows are rendered.
+	out := m.renderRows(80)
+
+	// Then: both states use bold colored styles, not only thin glyph changes.
+	if !strings.Contains(out, "\x1b[") {
+		t.Fatalf("renderRows has no ANSI highlight: %q", out)
+	}
+	if !stySelected.GetBold() || stySelected.GetForeground() != lipgloss.Color("42") {
+		t.Fatalf("selected style=%v bold=%v, want green 42 bold", stySelected.GetForeground(), stySelected.GetBold())
+	}
+	if !styPartial.GetBold() || styPartial.GetForeground() != lipgloss.Color("214") {
+		t.Fatalf("partial style=%v bold=%v, want yellow 214 bold", styPartial.GetForeground(), styPartial.GetBold())
 	}
 }

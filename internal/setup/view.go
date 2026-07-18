@@ -76,9 +76,11 @@ func (m model) renderRows(width int) string {
 			cur = "▶ "
 		}
 		var line string
+		state := stateEmpty
 		switch row.kind {
 		case rowSource:
 			src := m.sources[row.source]
+			state = m.sourceState(row.source)
 			arrow := "▸"
 			if src.expanded {
 				arrow = "▾"
@@ -90,20 +92,28 @@ func (m model) renderRows(width int) string {
 				}
 			}
 			line = fmt.Sprintf("%s%s %s %s  %d/%d",
-				cur, arrow, checkGlyph(m.sourceState(row.source)), src.group, selected, len(src.hosts))
+				cur, arrow, checkGlyph(state), src.group, selected, len(src.hosts))
 		case rowHost:
 			h := m.sources[row.source].hosts[row.host]
 			branch := "├─"
 			if row.host == len(m.sources[row.source].hosts)-1 {
 				branch = "└─"
 			}
-			mark := "☐"
+			mark := "□"
 			if h.selected {
-				mark = "☑"
+				mark = "■"
+				state = stateChecked
 			}
 			line = cur + "  " + branch + " " + mark + " " + h.host.Alias + "  " + hostDesc(h.host)
 		}
-		lines = append(lines, truncateWidth(line, width))
+		line = truncateWidth(line, width)
+		switch state {
+		case statePartial:
+			line = styPartial.Render(line)
+		case stateChecked:
+			line = stySelected.Render(line)
+		}
+		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -111,13 +121,13 @@ func (m model) renderRows(width int) string {
 func checkGlyph(s checkState) string {
 	switch s {
 	case stateEmpty:
-		return "☐"
+		return "□"
 	case statePartial:
-		return "◩"
+		return "▨"
 	case stateChecked:
-		return "☑"
+		return "■"
 	}
-	return "☐"
+	return "□"
 }
 
 func hostDesc(h config.SSHHost) string {

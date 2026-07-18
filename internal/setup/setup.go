@@ -10,8 +10,10 @@ import (
 )
 
 var (
-	styTitle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	styDim   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	styTitle    = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	styDim      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	stySelected = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+	styPartial  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 )
 
 func (m model) Init() tea.Cmd { return nil }

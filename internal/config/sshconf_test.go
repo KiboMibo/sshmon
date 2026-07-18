@@ -173,3 +173,35 @@ func TestWriteWithServersRoundTrip(t *testing.T) {
 		t.Errorf("db1 должен получить дефолты Port=22/User=root: %+v", s1)
 	}
 }
+
+func TestParseSSHConfigSkipsGitUserHosts(t *testing.T) {
+	// Given: repository-only SSH aliases and one ordinary server.
+	path := filepath.Join(t.TempDir(), "config")
+	body := `Host github.com
+    User git
+
+Host gitlab.com
+    User GIT
+
+Host production
+    HostName 10.0.0.8
+    User deploy
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: the SSH config is parsed for monitoring targets.
+	hosts, err := ParseSSHConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: Git transport aliases are excluded and the server remains.
+	if len(hosts) != 1 {
+		t.Fatalf("hosts=%+v, want only production", hosts)
+	}
+	if hosts[0].Alias != "production" || hosts[0].User != "deploy" {
+		t.Fatalf("host=%+v, want production/deploy", hosts[0])
+	}
+}
