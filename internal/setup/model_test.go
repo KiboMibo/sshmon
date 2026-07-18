@@ -1,9 +1,12 @@
 package setup
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kibomibo/sshmon/internal/config"
 )
@@ -208,5 +211,117 @@ func TestSelectedHostsKeepInputOrder(t *testing.T) {
 	// Then: hosts come back in source/declaration order.
 	if len(got) != 3 || got[0].Alias != "root-a" || got[1].Alias != "prod-a" || got[2].Alias != "prod-b" {
 		t.Fatalf("selection order broken: %+v", got)
+	}
+}
+
+func manyHosts(n int) []config.SSHHost {
+	hosts := make([]config.SSHHost, 0, n)
+	for i := 0; i < n; i++ {
+		hosts = append(hosts, config.SSHHost{
+			Alias:      fmt.Sprintf("host-%02d", i),
+			HostName:   fmt.Sprintf("10.0.0.%d", i+1),
+			Group:      "prod",
+			SourcePath: "/ssh/prod.conf",
+			Position:   i,
+		})
+	}
+	return hosts
+}
+
+func TestViewportScrollsWithCursor(t *testing.T) {
+	// Given: one expanded source with 30 hosts in a 50x8 terminal.
+	m := newModel(manyHosts(30))
+	m = press(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = press(t, m, tea.WindowSizeMsg{Width: 50, Height: 8})
+
+	// When: the cursor moves 20 rows down.
+	for i := 0; i < 20; i++ {
+		m = press(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+
+	// Then: the viewport height fits the terminal and follows the cursor.
+	if m.viewport.Height != 5 {
+		t.Fatalf("viewport.Height=%d, want 5 (height 8 - chrome 3)", m.viewport.Height)
+	}
+	if m.viewport.YOffset == 0 {
+		t.Fatal("viewport did not scroll with cursor")
+	}
+	if m.cursor < m.viewport.YOffset || m.cursor >= m.viewport.YOffset+m.viewport.Height {
+		t.Fatalf("cursor %d outside viewport window [%d,%d)", m.cursor, m.viewport.YOffset, m.viewport.YOffset+m.viewport.Height)
+	}
+}
+
+func TestResizeKeepsTinyTerminalUsable(t *testing.T) {
+	// Given: an expanded source shown in a 1-row terminal.
+	m := newModel(manyHosts(5))
+	m = press(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = press(t, m, tea.WindowSizeMsg{Width: 30, Height: 1})
+
+	// Then: the viewport keeps a positive height.
+	if m.viewport.Height < 1 {
+		t.Fatalf("viewport.Height=%d, want >= 1", m.viewport.Height)
+	}
+
+	// When: the cancel key is pressed.
+	next, cmd := m.Update(runeKey('q'))
+	out := next.(model)
+
+	// Then: the picker still aborts and quits.
+	if !out.abort || cmd == nil {
+		t.Fatalf("abort=%v cmd=%v, want abort and quit", out.abort, cmd)
+	}
+}
+
+func TestResizeAfterCollapseKeepsCursorValid(t *testing.T) {
+	// Given: an expanded source with the cursor on a deep host row.
+	m := newModel(manyHosts(10))
+	m = press(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = press(t, m, tea.WindowSizeMsg{Width: 40, Height: 6})
+	for i := 0; i < 8; i++ {
+		m = press(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+
+	// When: left moves to the parent and left again collapses it.
+	m = press(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+	m = press(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+
+	// Then: only the source row remains and the cursor stays in range.
+	if len(m.visible) != 1 {
+		t.Fatalf("visible=%d after collapse, want 1", len(m.visible))
+	}
+	if m.cursor != 0 {
+		t.Fatalf("cursor=%d after collapse, want 0", m.cursor)
+	}
+	if m.viewport.YOffset != 0 {
+		t.Fatalf("YOffset=%d after collapse, want 0", m.viewport.YOffset)
+	}
+}
+
+func TestRenderRowsFitWidthWithoutWrapping(t *testing.T) {
+	// Given: an expanded source holding a long Unicode alias and an IPv6 host.
+	m := newModel([]config.SSHHost{
+		{
+			Alias:      "очень-длинный-псевдоним-сервера-юникод",
+			HostName:   "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+			User:       "deploy",
+			Group:      "prod",
+			SourcePath: "/ssh/prod.conf",
+			Position:   0,
+		},
+	})
+	m.toggleExpanded(0)
+
+	// When: rows render into a 24-column terminal.
+	out := m.renderRows(24)
+
+	// Then: each visible row stays on one line within the width.
+	lines := strings.Split(out, "\n")
+	if len(lines) != len(m.visible) {
+		t.Fatalf("lines=%d visible=%d, want equal", len(lines), len(m.visible))
+	}
+	for i, line := range lines {
+		if w := lipgloss.Width(line); w > 24 {
+			t.Fatalf("line %d width=%d exceeds 24: %q", i, w, line)
+		}
 	}
 }

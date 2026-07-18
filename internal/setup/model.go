@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kibomibo/sshmon/internal/config"
@@ -46,6 +47,10 @@ type model struct {
 	done        bool
 	abort       bool
 	saveBlocked bool
+	viewport    viewport.Model
+	ready       bool
+	width       int
+	height      int
 }
 
 // newModel группирует хосты по источникам в порядке первого появления SourcePath.
@@ -194,6 +199,10 @@ func (m *model) moveToParent() {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		m.resize(size.Width, size.Height)
+		return m, nil
+	}
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
@@ -251,5 +260,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.done = true
 		return m, tea.Quit
 	}
+	m.refreshViewport()
 	return m, nil
 }
