@@ -67,9 +67,10 @@ type Issue struct {
 }
 
 type Snapshot struct {
-	Time    time.Time
-	Servers []Metrics // в порядке конфига
-	Issues  []Issue
+	Time       time.Time
+	Servers    []Metrics // в порядке конфига
+	Issues     []Issue
+	HistoryErr string
 }
 
 func groupTag(g string) string {

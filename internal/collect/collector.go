@@ -18,13 +18,16 @@ type serverState struct {
 }
 
 type Collector struct {
-	cfg    *config.Config
-	mu     sync.Mutex
-	states []*serverState
+	cfg         *config.Config
+	mu          sync.Mutex
+	states      []*serverState
+	subscribers map[uint64]chan Event
+	nextSubID   uint64
+	historyErr  string
 }
 
 func New(cfg *config.Config) *Collector {
-	c := &Collector{cfg: cfg}
+	c := &Collector{cfg: cfg, subscribers: make(map[uint64]chan Event)}
 	for _, s := range cfg.Servers {
 		c.states = append(c.states, &serverState{cfg: s, cli: sshx.New(s), m: Metrics{Name: s.Name, Group: s.Group}})
 	}
@@ -33,7 +36,12 @@ func New(cfg *config.Config) *Collector {
 
 // Run опрашивает все серверы раз в interval до отмены контекста.
 func (c *Collector) Run(ctx context.Context) {
-	c.pollAll()
+	c.RunWithSink(ctx, nil)
+}
+
+// RunWithSink опрашивает серверы, сохраняет снимки во внешнем приёмнике и публикует события.
+func (c *Collector) RunWithSink(ctx context.Context, sink func(context.Context, Snapshot) error) {
+	c.pollAndPublish(ctx, sink)
 	t := time.NewTicker(c.cfg.Interval)
 	defer t.Stop()
 	for {
@@ -41,9 +49,26 @@ func (c *Collector) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			c.pollAll()
+			c.pollAndPublish(ctx, sink)
 		}
 	}
+}
+
+func (c *Collector) pollAndPublish(ctx context.Context, sink func(context.Context, Snapshot) error) {
+	c.pollAll()
+	snapshot := c.Snapshot()
+	if sink != nil {
+		err := sink(ctx, snapshot)
+		c.mu.Lock()
+		if err == nil {
+			c.historyErr = ""
+		} else {
+			c.historyErr = err.Error()
+		}
+		c.mu.Unlock()
+		snapshot = c.Snapshot()
+	}
+	c.publish(Event{Snapshot: snapshot})
 }
 
 func (c *Collector) pollAll() {
@@ -93,7 +118,7 @@ func (c *Collector) poll(st *serverState) {
 func (c *Collector) Snapshot() Snapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	s := Snapshot{Time: time.Now()}
+	s := Snapshot{Time: time.Now(), HistoryErr: c.historyErr}
 	for _, st := range c.states {
 		s.Servers = append(s.Servers, st.m)
 	}
