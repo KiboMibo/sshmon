@@ -26,16 +26,13 @@ const (
 
 func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	value := key.String()
+	if cmd, handled := m.handleOverlayKey(key); handled {
+		return m, cmd
+	}
 	if m.screen == screenLogs {
 		if cmd, handled := m.handleLogsKey(key); handled {
 			return m, cmd
 		}
-	}
-	if m.overlay != overlayNone {
-		if value == "esc" {
-			m.overlay = overlayNone
-		}
-		return m, nil
 	}
 	if m.screen == screenHistory {
 		if cmd, handled := m.handleHistoryKey(value); handled {
@@ -45,13 +42,13 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch value {
 	case "c":
-		m.overlay = overlayChat
+		return m, m.openOverlay(overlayChat)
 	case "/":
-		m.overlay = overlaySearch
+		return m, m.openOverlay(overlaySearch)
 	case ":":
-		m.overlay = overlayPalette
+		return m, m.openOverlay(overlayPalette)
 	case "?":
-		m.overlay = overlayHelp
+		return m, m.openOverlay(overlayHelp)
 	case "up", "k":
 		if m.screen == screenFleet {
 			m.ensureFleet()

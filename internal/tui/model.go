@@ -12,31 +12,36 @@ import (
 )
 
 type Model struct {
-	collector *collect.Collector
-	llm       *llm.Client
-	config    *config.Config
+	collector  *collect.Collector
+	llm        *llm.Client
+	chatClient chatClient
+	config     *config.Config
 
-	screen     screenKind
-	overlay    overlayKind
-	selected   int
-	snapshot   collect.Snapshot
-	layout     layoutState
-	request    uint64
-	fleet      fleetModel
-	processes  processScreen
-	ports      portScreen
-	containers containerScreen
-	history    historyScreen
-	historyDB  *historypkg.Service
-	logs       logsScreen
-	logSource  logStreamer
+	screen       screenKind
+	overlay      overlayKind
+	selected     int
+	snapshot     collect.Snapshot
+	layout       layoutState
+	request      uint64
+	fleet        fleetModel
+	processes    processScreen
+	ports        portScreen
+	containers   containerScreen
+	history      historyScreen
+	historyDB    *historypkg.Service
+	logs         logsScreen
+	logSource    logStreamer
+	chat         chatOverlay
+	search       searchOverlay
+	palette      paletteOverlay
+	overlayState overlayState
 
 	events      <-chan collect.Event
 	unsubscribe func()
 }
 
 func New(collector *collect.Collector, client *llm.Client, cfg *config.Config) Model {
-	m := Model{collector: collector, llm: client, config: cfg, screen: screenFleet, fleet: newFleetModel(), logs: newLogsScreen(), logSource: collector}
+	m := Model{collector: collector, llm: client, chatClient: client, config: cfg, screen: screenFleet, fleet: newFleetModel(), logs: newLogsScreen(), logSource: collector, chat: newChatOverlay(), search: newSearchOverlay(), palette: newPaletteOverlay()}
 	if collector != nil {
 		m.snapshot = collector.Snapshot()
 		m.events, m.unsubscribe = collector.Subscribe(1)
@@ -53,6 +58,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.layout = newLayout(msg.Width, msg.Height)
 		m.logs.resize(msg.Width, msg.Height)
+		m.resizeOverlay(msg.Width, msg.Height)
 		return m, nil
 	case collectorEventMsg:
 		previousMinute := m.snapshot.Time.Truncate(time.Minute)
@@ -126,6 +132,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case chatResultMsg:
+		if msg.generation == m.chat.generation {
+			m.chat.loading = false
+			m.chat.err = msg.err
+			if msg.err == nil {
+				m.chat.messages = append(m.chat.messages, llm.Message{Role: "assistant", Content: msg.text})
+			}
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -138,7 +153,7 @@ func (m Model) View() string {
 	}
 	body := m.renderScreen()
 	if m.overlay != overlayNone {
-		body += "\n\n" + overlayStyle.Render(overlayTitle(m.overlay)+" · esc закрыть")
+		body += "\n\n" + m.renderOverlay()
 	}
 	return body
 }
