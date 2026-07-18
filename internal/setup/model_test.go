@@ -325,3 +325,51 @@ func TestRenderRowsFitWidthWithoutWrapping(t *testing.T) {
 		}
 	}
 }
+
+func integrationHosts() []config.SSHHost {
+	return []config.SSHHost{
+		{Alias: "root-a", HostName: "10.0.0.1", Group: "main", SourcePath: "/home/u/.ssh/config", Position: 0},
+		{Alias: "root-b", HostName: "10.0.0.2", Group: "main", SourcePath: "/home/u/.ssh/config", Position: 1},
+		{Alias: "prod-a", HostName: "10.0.1.1", Group: "prod", SourcePath: "/home/u/.ssh/conf.d/prod.conf", Position: 0},
+		{Alias: "prod-b", HostName: "10.0.1.2", Group: "prod", SourcePath: "/home/u/.ssh/conf.d/prod.conf", Position: 1},
+	}
+}
+
+func TestSelectedServersCarryMainAndIncludeGroups(t *testing.T) {
+	// Given: a main source with two hosts and a prod source with two hosts.
+	m := newModel(integrationHosts())
+
+	// When: the whole main source is selected and one prod host is picked.
+	m.toggleSource(0)
+	m.toggleExpanded(1)
+	m.sources[1].hosts[0].selected = true
+
+	// Then: converted servers keep input order and main/Include groups.
+	servers := config.HostsToServers(m.selectedHosts())
+	if len(servers) != 3 {
+		t.Fatalf("servers=%d, want 3", len(servers))
+	}
+	if servers[0].Group != "main" || servers[1].Group != "main" || servers[2].Group != "prod" {
+		t.Fatalf("groups=%q,%q,%q", servers[0].Group, servers[1].Group, servers[2].Group)
+	}
+	if servers[0].Name != "root-a" || servers[1].Name != "root-b" || servers[2].Name != "prod-a" {
+		t.Fatalf("names=%q,%q,%q", servers[0].Name, servers[1].Name, servers[2].Name)
+	}
+}
+
+func TestCancelAbortsDespiteSelection(t *testing.T) {
+	// Given: a model with every host selected.
+	m := newModel(integrationHosts())
+	m.toggleAll()
+
+	// When: the cancel key is pressed.
+	m = press(t, m, runeKey('q'))
+
+	// Then: the model aborts, which makes Run return nil before any write.
+	if !m.abort {
+		t.Fatal("q must abort even with selected hosts")
+	}
+	if m.done {
+		t.Fatal("cancel must not mark the model as done")
+	}
+}
