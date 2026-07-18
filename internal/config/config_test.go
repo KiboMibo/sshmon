@@ -87,6 +87,55 @@ func TestLoadMinimal(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultsHistoryRetention(t *testing.T) {
+	// Given: a minimal configuration with one server and no history block.
+	t.Setenv("HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("servers:\n  - host: 10.0.0.1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: the configuration is loaded.
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Then: history is enabled with the documented path and retention defaults.
+	if !cfg.History.IsEnabled() {
+		t.Fatal("history disabled by default")
+	}
+	if cfg.History.Path != filepath.Join(os.Getenv("HOME"), ".local", "share", "sshmon", "history.db") {
+		t.Fatalf("History.Path=%q", cfg.History.Path)
+	}
+	if cfg.History.RawRetention != 24*time.Hour || cfg.History.AggregateRetention != 720*time.Hour {
+		t.Fatalf("history retention=%v/%v", cfg.History.RawRetention, cfg.History.AggregateRetention)
+	}
+}
+
+func TestLoadPreservesExplicitlyDisabledHistory(t *testing.T) {
+	// Given: history is explicitly disabled.
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := "servers:\n  - host: 10.0.0.1\nhistory:\n  enabled: false\n  raw_retention: 2h\n  aggregate_retention: 48h\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: the configuration is loaded.
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Then: false and custom durations remain authoritative.
+	if cfg.History.IsEnabled() {
+		t.Fatal("explicit history.enabled=false was ignored")
+	}
+	if cfg.History.RawRetention != 2*time.Hour || cfg.History.AggregateRetention != 48*time.Hour {
+		t.Fatalf("history retention=%v/%v", cfg.History.RawRetention, cfg.History.AggregateRetention)
+	}
+}
+
 func TestWriteWithServersOmitsZeroPortAndLoadDefaultsToSSH(t *testing.T) {
 	// Given: an imported SSH host without an explicit Port.
 	path := filepath.Join(t.TempDir(), "config.yaml")

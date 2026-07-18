@@ -38,6 +38,12 @@ llm:
   model: gpt-4o-mini
   api_key_env: OPENAI_API_KEY
   # api_key: sk-...
+
+history:
+  enabled: true
+  path: ~/.local/share/sshmon/history.db
+  raw_retention: 24h
+  aggregate_retention: 720h
 `
 
 // Template — шаблон конфига без серверов (для headless / пустого ssh-конфига).

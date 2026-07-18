@@ -49,12 +49,24 @@ type Thresholds struct {
 	Disk float64 `yaml:"disk"`
 }
 
+type History struct {
+	Enabled            *bool         `yaml:"enabled,omitempty"`
+	Path               string        `yaml:"path,omitempty"`
+	RawRetention       time.Duration `yaml:"-"`
+	RawRetentionText   string        `yaml:"raw_retention,omitempty"`
+	AggregateRetention time.Duration `yaml:"-"`
+	AggregateText      string        `yaml:"aggregate_retention,omitempty"`
+}
+
+func (h History) IsEnabled() bool { return h.Enabled == nil || *h.Enabled }
+
 type Config struct {
 	Interval   time.Duration `yaml:"-"`
 	IntervalS  string        `yaml:"interval"`
 	Servers    []Server      `yaml:"servers"`
 	LLM        LLM           `yaml:"llm"`
 	Thresholds Thresholds    `yaml:"thresholds"`
+	History    History       `yaml:"history"`
 }
 
 func DefaultPath() string {
@@ -88,6 +100,29 @@ func Load(path string) (*Config, error) {
 	}
 	if c.Thresholds.Disk == 0 {
 		c.Thresholds.Disk = 90
+	}
+	if c.History.Path == "" {
+		c.History.Path = expandHome("~/.local/share/sshmon/history.db")
+	} else {
+		c.History.Path = expandHome(c.History.Path)
+	}
+	if c.History.RawRetentionText == "" {
+		c.History.RawRetention = 24 * time.Hour
+	} else {
+		d, err := time.ParseDuration(c.History.RawRetentionText)
+		if err != nil {
+			return nil, fmt.Errorf("history.raw_retention: %w", err)
+		}
+		c.History.RawRetention = d
+	}
+	if c.History.AggregateText == "" {
+		c.History.AggregateRetention = 720 * time.Hour
+	} else {
+		d, err := time.ParseDuration(c.History.AggregateText)
+		if err != nil {
+			return nil, fmt.Errorf("history.aggregate_retention: %w", err)
+		}
+		c.History.AggregateRetention = d
 	}
 	if len(c.Servers) == 0 {
 		return nil, fmt.Errorf("%s: %w (servers)", path, ErrNoServers)
