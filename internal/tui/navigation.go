@@ -26,6 +26,11 @@ const (
 
 func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	value := key.String()
+	if m.screen == screenLogs {
+		if cmd, handled := m.handleLogsKey(key); handled {
+			return m, cmd
+		}
+	}
 	if m.overlay != overlayNone {
 		if value == "esc" {
 			m.overlay = overlayNone
@@ -98,12 +103,16 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.screen == screenHistory {
 				return m, m.startHistoryQuery()
 			}
+			if m.screen == screenLogs {
+				return m, m.startLogsStream()
+			}
 			m.request++
 		}
 	case "esc":
 		if isDeepScreen(m.screen) {
 			m.cancelDiagnostics()
 			m.cancelHistoryQuery()
+			m.cancelLogsStream()
 			m.screen = screenDashboard
 			m.request++
 		} else if m.screen == screenDashboard {

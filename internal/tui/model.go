@@ -28,13 +28,15 @@ type Model struct {
 	containers containerScreen
 	history    historyScreen
 	historyDB  *historypkg.Service
+	logs       logsScreen
+	logSource  logStreamer
 
 	events      <-chan collect.Event
 	unsubscribe func()
 }
 
 func New(collector *collect.Collector, client *llm.Client, cfg *config.Config) Model {
-	m := Model{collector: collector, llm: client, config: cfg, screen: screenFleet, fleet: newFleetModel()}
+	m := Model{collector: collector, llm: client, config: cfg, screen: screenFleet, fleet: newFleetModel(), logs: newLogsScreen(), logSource: collector}
 	if collector != nil {
 		m.snapshot = collector.Snapshot()
 		m.events, m.unsubscribe = collector.Subscribe(1)
@@ -50,6 +52,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.layout = newLayout(msg.Width, msg.Height)
+		m.logs.resize(msg.Width, msg.Height)
 		return m, nil
 	case collectorEventMsg:
 		previousMinute := m.snapshot.Time.Truncate(time.Minute)
@@ -89,6 +92,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.history.apply(msg.points, msg.err)
 		}
 		return m, nil
+	case logsOpenedMsg:
+		if msg.generation != m.logs.generation {
+			if msg.stream.Close != nil {
+				_ = msg.stream.Close()
+			}
+			return m, nil
+		}
+		if msg.err != nil {
+			m.logs.status = diagnosticsError
+			m.logs.err = msg.err
+			return m, nil
+		}
+		m.logs.stream = msg.stream
+		m.logs.status = diagnosticsReady
+		return m, waitLogEvent(msg.generation, msg.stream)
+	case logLineMsg:
+		if msg.generation != m.logs.generation {
+			return m, nil
+		}
+		m.logs.buffer.Append(msg.line)
+		m.logs.lastLineAt = time.Now()
+		m.logs.status = diagnosticsReady
+		m.logs.refresh()
+		return m, waitLogEvent(msg.generation, m.logs.stream)
+	case logErrorMsg:
+		if msg.generation == m.logs.generation {
+			m.logs.err = msg.err
+			if len(m.logs.buffer.Visible()) > 0 {
+				m.logs.status = diagnosticsStale
+			} else {
+				m.logs.status = diagnosticsError
+			}
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -119,7 +156,7 @@ func (m Model) renderScreen() string {
 	case screenHistory:
 		return m.renderHistory()
 	case screenLogs:
-		return m.renderDeepPlaceholder("Логи")
+		return m.renderLogs()
 	case screenContainers:
 		return m.renderContainers()
 	default:
