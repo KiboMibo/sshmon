@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,13 +21,14 @@ type Model struct {
 	snapshot collect.Snapshot
 	layout   layoutState
 	request  uint64
+	fleet    fleetModel
 
 	events      <-chan collect.Event
 	unsubscribe func()
 }
 
 func New(collector *collect.Collector, client *llm.Client, cfg *config.Config) Model {
-	m := Model{collector: collector, llm: client, config: cfg, screen: screenFleet}
+	m := Model{collector: collector, llm: client, config: cfg, screen: screenFleet, fleet: newFleetModel()}
 	if collector != nil {
 		m.snapshot = collector.Snapshot()
 		m.events, m.unsubscribe = collector.Subscribe(1)
@@ -71,7 +71,7 @@ func (m Model) View() string {
 func (m Model) renderScreen() string {
 	switch m.screen {
 	case screenFleet:
-		return m.renderFleetPlaceholder()
+		return m.renderFleet()
 	case screenDashboard:
 		return m.renderDashboardPlaceholder()
 	case screenProcesses:
@@ -87,21 +87,6 @@ func (m Model) renderScreen() string {
 	default:
 		return "sshmon"
 	}
-}
-
-func (m Model) renderFleetPlaceholder() string {
-	out := titleStyle.Render("sshmon · Серверы") + "\n"
-	for i, server := range m.snapshot.Servers {
-		cursor := "  "
-		if i == m.selected {
-			cursor = "▶ "
-		}
-		out += fmt.Sprintf("%s%s\n", cursor, server.Name)
-	}
-	if m.layout.wide {
-		out += "\n" + dimStyle.Render("Предпросмотр: "+m.selectedName())
-	}
-	return out + "\n" + dimStyle.Render("enter открыть · c чат · / поиск · : команды · ? помощь · q выход")
 }
 
 func (m Model) renderDashboardPlaceholder() string {

@@ -43,12 +43,41 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.overlay = overlayHelp
 	case "up", "k":
-		if m.screen == screenFleet && m.selected > 0 {
-			m.selected--
+		if m.screen == screenFleet {
+			m.ensureFleet()
+			m.moveFleet(-1)
 		}
 	case "down", "j":
-		if m.screen == screenFleet && m.selected+1 < len(m.snapshot.Servers) {
-			m.selected++
+		if m.screen == screenFleet {
+			m.ensureFleet()
+			m.moveFleet(1)
+		}
+	case "pgup":
+		if m.screen == screenFleet {
+			m.ensureFleet()
+			m.moveFleet(-fleetPageSize)
+		}
+	case "pgdown":
+		if m.screen == screenFleet {
+			m.ensureFleet()
+			m.moveFleet(fleetPageSize)
+		}
+	case "g":
+		if m.screen == screenFleet {
+			m.ensureFleet()
+			m.fleet.filter.Group = cycleGroup(m.fleet.filter.Group, m.snapshot.Servers)
+			m.selectNearestVisible()
+		}
+	case "!":
+		if m.screen == screenFleet {
+			m.ensureFleet()
+			m.fleet.filter.ProblemsOnly = !m.fleet.filter.ProblemsOnly
+			m.selectNearestVisible()
+		}
+	case "v":
+		if m.screen == screenFleet {
+			m.ensureFleet()
+			m.fleet.preview = !m.fleet.preview
 		}
 	case "enter":
 		if m.screen == screenFleet && len(m.snapshot.Servers) > 0 {
