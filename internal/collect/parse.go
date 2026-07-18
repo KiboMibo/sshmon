@@ -62,8 +62,6 @@ func sections(raw string) map[string][]string {
 }
 
 var partRe = regexp.MustCompile(`^(sd[a-z]+|vd[a-z]+|xvd[a-z]+|hd[a-z]+)\d+$|^(nvme\d+n\d+|mmcblk\d+)p\d+$`)
-var procRe = regexp.MustCompile(`\(\("?([^",]+)"?,`)
-
 var skipFs = map[string]bool{"tmpfs": true, "devtmpfs": true, "udev": true, "none": true, "shm": true, "overlay": true}
 
 func parseSample(raw string, at time.Time) *sample {
@@ -185,30 +183,7 @@ func parseSample(raw string, at time.Time) *sample {
 			UsedPct: 100 * float64(used) / float64(total),
 		})
 	}
-	for _, ln := range sec["PORTS"] {
-		f := strings.Fields(ln)
-		if len(f) < 5 {
-			continue
-		}
-		proto := f[0]
-		if proto != "tcp" && proto != "udp" && proto != "tcp6" && proto != "udp6" {
-			continue
-		}
-		var local, proc string
-		if f[1] == "LISTEN" || f[1] == "UNCONN" || strings.Contains(ln, "users:") {
-			local = f[4] // ss: Netid State Recv-Q Send-Q Local Peer [Process]
-		} else {
-			local = f[3] // netstat: Proto Recv-Q Send-Q Local Foreign [State] PID/Prog
-			last := f[len(f)-1]
-			if i := strings.IndexByte(last, '/'); i >= 0 {
-				proc = last[i+1:]
-			}
-		}
-		if m := procRe.FindStringSubmatch(ln); m != nil {
-			proc = m[1]
-		}
-		s.ports = append(s.ports, Port{Proto: proto, Local: local, Process: proc})
-	}
+	s.ports, _ = ParsePorts(strings.Join(sec["PORTS"], "\n"))
 	return s
 }
 

@@ -2,6 +2,8 @@
 package sshx
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -59,6 +61,17 @@ func (c *Client) drop() {
 // Ненулевой exit code с непустым выводом не считается ошибкой:
 // в цепочках `a || b` полезный вывод важнее кода возврата.
 func (c *Client) Run(cmd string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	out, err := c.RunContext(ctx, cmd)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "", fmt.Errorf("таймаут %s", timeout)
+	}
+	return out, err
+}
+
+// RunContext выполняет команду до завершения или отмены контекста.
+func (c *Client) RunContext(ctx context.Context, cmd string) (string, error) {
 	cl, err := c.conn()
 	if err != nil {
 		return "", err
@@ -69,27 +82,33 @@ func (c *Client) Run(cmd string, timeout time.Duration) (string, error) {
 		return "", err
 	}
 	defer sess.Close()
-	type res struct {
-		out []byte
-		err error
+	out, err := runCommand(ctx, func() ([]byte, error) { return sess.Output(cmd) }, c.drop)
+	if err != nil {
+		if len(out) > 0 {
+			return string(out), nil
+		}
+		return "", err
 	}
-	ch := make(chan res, 1)
+	return string(out), nil
+}
+
+type commandResult struct {
+	out []byte
+	err error
+}
+
+func runCommand(ctx context.Context, output func() ([]byte, error), drop func()) ([]byte, error) {
+	result := make(chan commandResult, 1)
 	go func() {
-		out, err := sess.Output(cmd)
-		ch <- res{out, err}
+		out, err := output()
+		result <- commandResult{out: out, err: err}
 	}()
 	select {
-	case r := <-ch:
-		if r.err != nil {
-			if len(r.out) > 0 {
-				return string(r.out), nil
-			}
-			return "", r.err
-		}
-		return string(r.out), nil
-	case <-time.After(timeout):
-		c.drop()
-		return "", fmt.Errorf("таймаут %s", timeout)
+	case res := <-result:
+		return res.out, res.err
+	case <-ctx.Done():
+		drop()
+		return nil, ctx.Err()
 	}
 }
 

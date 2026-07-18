@@ -32,6 +32,24 @@ type Port struct {
 	Proto   string
 	Local   string
 	Process string
+	PID     int
+}
+
+type Process struct {
+	PID     int
+	Command string
+	CPUPct  float64
+	MemPct  float64
+}
+
+type Container struct {
+	ID       string
+	Name     string
+	Image    string
+	Status   string
+	CPUPct   float64
+	MemPct   float64
+	MemUsage string
 }
 
 type Metrics struct {
