@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -9,20 +10,25 @@ import (
 
 // SSHHost — хост из ~/.ssh/config.
 type SSHHost struct {
-	Alias    string
-	HostName string
-	User     string
-	Port     int
-	Key      string
-	Group    string // basename include-файла без расширения; "" для главного config
+	Alias      string
+	HostName   string
+	User       string
+	Port       int
+	Key        string
+	Group      string // "main" для корневого config, иначе basename include-файла без ".conf"
+	SourcePath string // нормализованный абсолютный путь файла-источника
+	Position   int    // порядковый номер объявления алиаса внутри источника
 }
 
 // ParseSSHConfig читает ssh-конфиг и все его Include-файлы.
-// Хосты из include-файлов получают группу по имени файла
-// (~/.ssh/conf.d/prod.conf → группа "prod").
+// Хосты корневого файла получают группу "main", хосты include-файлов —
+// группу по имени файла (~/.ssh/conf.d/prod.conf → группа "prod").
 func ParseSSHConfig(path string) ([]SSHHost, error) {
-	seen := map[string]bool{}
-	return parseSSHFile(path, "", seen)
+	sourcePath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("normalize SSH config %q: %w", path, err)
+	}
+	return parseSSHFile(filepath.Clean(sourcePath), "main", map[string]bool{})
 }
 
 // DefaultSSHConfigPath — ~/.ssh/config.
@@ -44,6 +50,7 @@ func parseSSHFile(path, group string, seen map[string]bool) ([]SSHHost, error) {
 	var out []SSHHost
 	var cur []*SSHHost // алиасы текущего Host-блока
 	inMatch := false   // Match-блоки пропускаем целиком
+	nextPosition := 0  // порядковый номер объявления в этом файле
 
 	flush := func() {
 		for _, h := range cur {
@@ -72,7 +79,8 @@ func parseSSHFile(path, group string, seen map[string]bool) ([]SSHHost, error) {
 				if strings.ContainsAny(a, "*?!") {
 					continue // wildcard-паттерны не мониторим
 				}
-				cur = append(cur, &SSHHost{Alias: a, Group: group})
+				cur = append(cur, &SSHHost{Alias: a, Group: group, SourcePath: path, Position: nextPosition})
+				nextPosition++
 			}
 		case "match":
 			flush()
@@ -86,13 +94,22 @@ func parseSSHFile(path, group string, seen map[string]bool) ([]SSHHost, error) {
 				if !filepath.IsAbs(pat) {
 					pat = filepath.Join(filepath.Dir(path), pat)
 				}
-				files, _ := filepath.Glob(pat)
+				files, err := filepath.Glob(pat)
+				if err != nil {
+					return nil, fmt.Errorf("expand SSH Include %q: %w", pat, err)
+				}
 				for _, f := range files {
-					g := strings.TrimSuffix(filepath.Base(f), filepath.Ext(f))
-					hosts, err := parseSSHFile(f, g, seen)
-					if err == nil {
-						out = append(out, hosts...)
+					sourcePath, err := filepath.Abs(f)
+					if err != nil {
+						return nil, fmt.Errorf("normalize SSH Include %q: %w", f, err)
 					}
+					sourcePath = filepath.Clean(sourcePath)
+					g := strings.TrimSuffix(filepath.Base(sourcePath), ".conf")
+					hosts, err := parseSSHFile(sourcePath, g, seen)
+					if err != nil {
+						return nil, fmt.Errorf("parse SSH Include %q: %w", sourcePath, err)
+					}
+					out = append(out, hosts...)
 				}
 			}
 		case "hostname":
@@ -130,7 +147,9 @@ func splitKV(line string) (key, val string, ok bool) {
 	return "", "", false
 }
 
-// Servers превращает ssh-хосты в конфиг sshmon.
+// HostsToServers превращает ssh-хосты в конфиг sshmon.
+// SourcePath и Position — внутренняя идентичность для пикера,
+// в итоговый Server переносится только Group.
 func HostsToServers(hosts []SSHHost) []Server {
 	var out []Server
 	for _, h := range hosts {
