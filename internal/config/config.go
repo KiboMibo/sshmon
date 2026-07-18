@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+var ErrNoServers = errors.New("не задано ни одного сервера")
 
 type Server struct {
 	Name            string `yaml:"name"`
@@ -87,7 +90,7 @@ func Load(path string) (*Config, error) {
 		c.Thresholds.Disk = 90
 	}
 	if len(c.Servers) == 0 {
-		return nil, fmt.Errorf("%s: не задано ни одного сервера (servers)", path)
+		return nil, fmt.Errorf("%s: %w (servers)", path, ErrNoServers)
 	}
 	for i := range c.Servers {
 		s := &c.Servers[i]

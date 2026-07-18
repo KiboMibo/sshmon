@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -56,6 +57,52 @@ func WriteWithServers(path string, servers []Server) error {
 	body := "# Конфиг sshmon (создан из ~/.ssh/config при первом запуске).\ninterval: 5s\n\n" +
 		string(sb) + tmplTail
 	return writeNew(path, body)
+}
+
+// PopulateServers атомарно добавляет серверы в существующий пустой конфиг.
+func PopulateServers(path string, servers []Server) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var c Config
+	if err := yaml.Unmarshal(b, &c); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if len(c.Servers) != 0 {
+		return fmt.Errorf("%s: конфиг уже содержит серверы", path)
+	}
+	if len(servers) == 0 {
+		return ErrNoServers
+	}
+	c.Servers = servers
+	body, err := yaml.Marshal(&c)
+	if err != nil {
+		return err
+	}
+	return replaceFile(path, body)
+}
+
+func replaceFile(path string, body []byte) error {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, ".config-*.yaml")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err := f.Write(body); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func writeNew(path, body string) error {

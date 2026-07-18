@@ -28,11 +28,13 @@ func main() {
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) && !*headless {
-			cfg = firstRun(*cfgPath)
+		missing := errors.Is(err, fs.ErrNotExist)
+		empty := errors.Is(err, config.ErrNoServers)
+		if (missing || empty) && !*headless {
+			cfg = firstRun(*cfgPath, empty)
 		}
 		if cfg == nil {
-			if errors.Is(err, fs.ErrNotExist) {
+			if missing {
 				writeTemplateAndExit(*cfgPath, err)
 			}
 			fmt.Fprintf(os.Stderr, "sshmon: %v\n", err)
@@ -62,9 +64,9 @@ func main() {
 	}
 }
 
-// firstRun — конфига нет: предлагаем выбрать серверы из ~/.ssh/config.
+// firstRun предлагает выбрать серверы из ~/.ssh/config для нового или пустого конфига.
 // Возвращает загруженный конфиг или nil (тогда вызывающий пишет шаблон).
-func firstRun(cfgPath string) *config.Config {
+func firstRun(cfgPath string, populate bool) *config.Config {
 	hosts, err := config.ParseSSHConfig(config.DefaultSSHConfigPath())
 	if err != nil || len(hosts) == 0 {
 		return nil // нет ssh-конфига — fallback на шаблон
@@ -78,8 +80,14 @@ func firstRun(cfgPath string) *config.Config {
 		fmt.Fprintln(os.Stderr, "Ничего не выбрано — выход. Конфиг не создан.")
 		os.Exit(1)
 	}
-	if err := config.WriteWithServers(cfgPath, servers); err != nil {
-		fmt.Fprintf(os.Stderr, "sshmon: не удалось создать конфиг: %v\n", err)
+	var saveErr error
+	if populate {
+		saveErr = config.PopulateServers(cfgPath, servers)
+	} else {
+		saveErr = config.WriteWithServers(cfgPath, servers)
+	}
+	if saveErr != nil {
+		fmt.Fprintf(os.Stderr, "sshmon: не удалось сохранить конфиг: %v\n", saveErr)
 		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stderr, "Создан конфиг %s (%d серверов).\n", cfgPath, len(servers))
