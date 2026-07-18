@@ -32,6 +32,11 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.screen == screenHistory {
+		if cmd, handled := m.handleHistoryKey(value); handled {
+			return m, cmd
+		}
+	}
 
 	switch value {
 	case "c":
@@ -90,11 +95,15 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.screen == screenProcesses || m.screen == screenPorts || m.screen == screenContainers {
 				return m, m.startDiagnostics()
 			}
+			if m.screen == screenHistory {
+				return m, m.startHistoryQuery()
+			}
 			m.request++
 		}
 	case "esc":
 		if isDeepScreen(m.screen) {
 			m.cancelDiagnostics()
+			m.cancelHistoryQuery()
 			m.screen = screenDashboard
 			m.request++
 		} else if m.screen == screenDashboard {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/kibomibo/sshmon/internal/collect"
 	"github.com/kibomibo/sshmon/internal/config"
+	historypkg "github.com/kibomibo/sshmon/internal/history"
 	"github.com/kibomibo/sshmon/internal/llm"
 )
 
@@ -25,6 +26,8 @@ type Model struct {
 	processes  processScreen
 	ports      portScreen
 	containers containerScreen
+	history    historyScreen
+	historyDB  *historypkg.Service
 
 	events      <-chan collect.Event
 	unsubscribe func()
@@ -49,8 +52,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout = newLayout(msg.Width, msg.Height)
 		return m, nil
 	case collectorEventMsg:
+		previousMinute := m.snapshot.Time.Truncate(time.Minute)
 		m.snapshot = msg.event.Snapshot
 		m.clampSelection()
+		if m.screen == screenHistory && !m.snapshot.Time.Truncate(time.Minute).Equal(previousMinute) {
+			return m, tea.Batch(waitEvent(m.events), m.startHistoryQuery())
+		}
 		return m, waitEvent(m.events)
 	case ageTickMsg:
 		return m, ageTick()
@@ -75,6 +82,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case diagnosticsTickMsg:
 		if msg.screen == m.screen && msg.generation == m.diagnosticsGeneration(msg.screen) {
 			return m, m.startDiagnostics()
+		}
+		return m, nil
+	case historyResultMsg:
+		if msg.generation == m.history.generation {
+			m.history.apply(msg.points, msg.err)
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -105,7 +117,7 @@ func (m Model) renderScreen() string {
 	case screenPorts:
 		return m.renderPorts()
 	case screenHistory:
-		return m.renderDeepPlaceholder("История")
+		return m.renderHistory()
 	case screenLogs:
 		return m.renderDeepPlaceholder("Логи")
 	case screenContainers:
