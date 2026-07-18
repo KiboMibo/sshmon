@@ -73,7 +73,7 @@ func (m Model) renderScreen() string {
 	case screenFleet:
 		return m.renderFleet()
 	case screenDashboard:
-		return m.renderDashboardPlaceholder()
+		return m.renderDashboard()
 	case screenProcesses:
 		return m.renderDeepPlaceholder("Процессы")
 	case screenPorts:
@@ -87,12 +87,6 @@ func (m Model) renderScreen() string {
 	default:
 		return "sshmon"
 	}
-}
-
-func (m Model) renderDashboardPlaceholder() string {
-	return titleStyle.Render("sshmon · "+m.selectedName()) + "\n\n" +
-		"CPU · Память · Сеть · Диски · Проблемы\n\n" +
-		dimStyle.Render("p процессы · o порты · h история · l логи · d контейнеры · esc назад")
 }
 
 func (m Model) renderDeepPlaceholder(title string) string {
