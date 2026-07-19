@@ -1,11 +1,16 @@
 package collect
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
 	"github.com/kibomibo/sshmon/internal/history"
 )
+
+type HistoryWriter interface {
+	Write(context.Context, history.Sample) error
+}
 
 type Event struct {
 	Snapshot Snapshot
@@ -99,6 +104,17 @@ func (c *Collector) historySamples(snapshot Snapshot) []history.Sample {
 		samples = append(samples, sample)
 	}
 	return samples
+}
+
+func (c *Collector) HistorySink(writer HistoryWriter) func(context.Context, Snapshot) error {
+	return func(ctx context.Context, snapshot Snapshot) error {
+		for _, sample := range c.historySamples(snapshot) {
+			if err := writer.Write(ctx, sample); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }
 
 func floatPtr(value float64) *float64 {
