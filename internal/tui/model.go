@@ -157,10 +157,11 @@ func (m Model) View() string {
 	if m.layout.tooSmall {
 		return "sshmon\n\nувеличьте терминал минимум до 60×16"
 	}
-	body := m.renderScreen()
+	overlay := ""
 	if m.overlay != overlayNone {
-		body = composeOverlay(body, m.renderOverlay(), m.layout.height)
+		overlay = m.renderOverlay()
 	}
+	body := composeScreen(m.renderScreen(), overlay, m.layout)
 	return frameStyle.Width(m.layout.width).Height(m.layout.height).Render(body)
 }
 

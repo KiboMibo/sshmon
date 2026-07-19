@@ -57,18 +57,38 @@ func byteValue(value float64) string {
 	return fmt.Sprintf("%.1f%s", value, units[unit])
 }
 
-func composeOverlay(screen, overlay string, height int) string {
-	if height <= 0 {
+func composeScreen(screen, overlay string, layout layoutState) string {
+	if layout.height <= 0 {
+		if overlay == "" {
+			return screen
+		}
 		return screen + "\n\n" + overlay
 	}
-	screenLines := strings.Split(screen, "\n")
-	overlayLines := strings.Split(overlay, "\n")
-	keep := max(0, height-len(overlayLines)-1)
-	if keep > len(screenLines) {
-		keep = len(screenLines)
+	screenLines := strings.Split(strings.TrimSuffix(screen, "\n"), "\n")
+	footer := fitLine(screenLines[len(screenLines)-1], layout.width)
+	bodyLines := screenLines[:len(screenLines)-1]
+	overlayLines := []string(nil)
+	if overlay != "" {
+		overlayLines = strings.Split(strings.TrimSuffix(overlay, "\n"), "\n")
 	}
-	lines := append(screenLines[:keep], "")
-	return strings.Join(append(lines, overlayLines...), "\n")
+	available := max(0, layout.height-1)
+	if len(overlayLines) > available {
+		overlayLines = overlayLines[:available]
+	}
+	separator := 0
+	if len(bodyLines) > 0 && len(overlayLines) > 0 && len(overlayLines) < available {
+		separator = 1
+	}
+	bodyCount := min(len(bodyLines), available-len(overlayLines)-separator)
+	lines := append([]string(nil), bodyLines[:bodyCount]...)
+	for len(lines)+separator+len(overlayLines) < available {
+		lines = append(lines, "")
+	}
+	if separator > 0 {
+		lines = append(lines, "")
+	}
+	lines = append(lines, overlayLines...)
+	return strings.Join(append(lines, footer), "\n")
 }
 
 func fitLine(value string, width int) string {
