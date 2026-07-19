@@ -47,7 +47,7 @@ func (m Model) renderDashboard() string {
 	if m.layout.wide {
 		lines = append(lines, wideDeviceLines(server, contentWidth)...)
 	}
-	lines = append(lines, "", dimStyle.Render("p процессы · o порты · h история · l логи · d контейнеры · c чат · esc назад"))
+	lines = append(lines, "", dimStyle.Render("r переподключить · p процессы · o порты · h история · l логи · d контейнеры · c чат · esc назад"))
 	return strings.Join(lines, "\n")
 }
 

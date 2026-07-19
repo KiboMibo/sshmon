@@ -22,6 +22,7 @@ const (
 	overlaySearch
 	overlayPalette
 	overlayHelp
+	overlayPassphrase
 )
 
 func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -49,6 +50,10 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openOverlay(overlayPalette)
 	case "?":
 		return m, m.openOverlay(overlayHelp)
+	case "r":
+		if m.screen == screenDashboard {
+			return m, m.startReconnect()
+		}
 	case "up", "k":
 		if m.screen == screenFleet {
 			m.ensureFleet()
@@ -155,6 +160,8 @@ func overlayTitle(overlay overlayKind) string {
 		return "Команды"
 	case overlayHelp:
 		return "Справка"
+	case overlayPassphrase:
+		return "Passphrase"
 	default:
 		return ""
 	}

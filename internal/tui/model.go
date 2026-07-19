@@ -17,31 +17,34 @@ type Model struct {
 	chatClient chatClient
 	config     *config.Config
 
-	screen       screenKind
-	overlay      overlayKind
-	selected     int
-	snapshot     collect.Snapshot
-	layout       layoutState
-	request      uint64
-	fleet        fleetModel
-	processes    processScreen
-	ports        portScreen
-	containers   containerScreen
-	history      historyScreen
-	historyDB    *historypkg.Service
-	logs         logsScreen
-	logSource    logStreamer
-	chat         chatOverlay
-	search       searchOverlay
-	palette      paletteOverlay
-	overlayState overlayState
+	screen              screenKind
+	overlay             overlayKind
+	selected            int
+	snapshot            collect.Snapshot
+	layout              layoutState
+	request             uint64
+	fleet               fleetModel
+	processes           processScreen
+	ports               portScreen
+	containers          containerScreen
+	history             historyScreen
+	historyDB           *historypkg.Service
+	logs                logsScreen
+	logSource           logStreamer
+	chat                chatOverlay
+	search              searchOverlay
+	palette             paletteOverlay
+	passphrase          passphraseOverlay
+	overlayState        overlayState
+	connections         connectionManager
+	reconnectGeneration uint64
 
 	events      <-chan collect.Event
 	unsubscribe func()
 }
 
 func New(collector *collect.Collector, client *llm.Client, cfg *config.Config) Model {
-	m := Model{collector: collector, llm: client, chatClient: client, config: cfg, screen: screenFleet, fleet: newFleetModel(), logs: newLogsScreen(), logSource: collector, chat: newChatOverlay(), search: newSearchOverlay(), palette: newPaletteOverlay()}
+	m := Model{collector: collector, llm: client, chatClient: client, config: cfg, screen: screenFleet, fleet: newFleetModel(), logs: newLogsScreen(), logSource: collector, chat: newChatOverlay(), search: newSearchOverlay(), palette: newPaletteOverlay(), connections: collector}
 	if collector != nil {
 		m.snapshot = collector.Snapshot()
 		m.events, m.unsubscribe = collector.Subscribe(1)
@@ -140,6 +143,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chat.messages = append(m.chat.messages, llm.Message{Role: "assistant", Content: msg.text})
 			}
 		}
+		return m, nil
+	case reconnectResultMsg:
+		m.applyReconnectResult(msg)
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)

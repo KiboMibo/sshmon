@@ -17,6 +17,7 @@ const (
 	paletteOpenHistory
 	paletteOpenLogs
 	paletteOpenContainers
+	paletteReconnect
 	paletteOpenServer
 )
 
@@ -42,6 +43,7 @@ func paletteItems(m Model) []paletteItem {
 	items := []paletteItem{{label: "Чат", action: paletteOpenChat}, {label: "Справка", action: paletteOpenHelp}}
 	if m.screen == screenDashboard {
 		items = append(items,
+			paletteItem{label: "Переподключить", action: paletteReconnect},
 			paletteItem{label: "Процессы", action: paletteOpenProcesses},
 			paletteItem{label: "Порты", action: paletteOpenPorts},
 			paletteItem{label: "История", action: paletteOpenHistory},
@@ -111,6 +113,8 @@ func (m *Model) executePalette(item paletteItem) tea.Cmd {
 	case paletteOpenContainers:
 		m.screen = screenContainers
 		return m.startDiagnostics()
+	case paletteReconnect:
+		return m.startReconnect()
 	}
 	return nil
 }

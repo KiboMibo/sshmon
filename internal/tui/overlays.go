@@ -40,6 +40,9 @@ func (m *Model) openOverlay(kind overlayKind) tea.Cmd {
 		return textinput.Blink
 	case overlayHelp:
 		return nil
+	case overlayPassphrase:
+		m.passphrase.input.Focus()
+		return textinput.Blink
 	default:
 		return nil
 	}
@@ -50,6 +53,10 @@ func (m *Model) closeOverlay() {
 		m.cancelChat()
 		m.chat.messages = nil
 	}
+	if m.overlay == overlayPassphrase {
+		m.passphrase.input.Reset()
+		m.passphrase.server = ""
+	}
 	m.overlay = overlayNone
 }
 
@@ -59,6 +66,7 @@ func (m *Model) resizeOverlay(width, height int) {
 	m.search.input.Width = inputWidth
 	m.palette.input.Width = inputWidth
 	m.chat.input.Width = inputWidth
+	m.passphrase.input.Width = inputWidth
 }
 
 func (m Model) renderOverlay() string {
@@ -72,6 +80,8 @@ func (m Model) renderOverlay() string {
 		content = m.renderPalette()
 	case overlayHelp:
 		content = "Справка\n\n" + helpText(m.screen) + "\n\nesc закрыть"
+	case overlayPassphrase:
+		content = m.renderPassphrase()
 	}
 	return overlayStyle.Copy().BorderStyle(lipgloss.RoundedBorder()).Padding(1, 2).Render(content)
 }
@@ -99,6 +109,8 @@ func (m *Model) handleOverlayKey(key tea.KeyMsg) (tea.Cmd, bool) {
 		return cmd, true
 	case overlayPalette:
 		return m.handlePaletteKey(key), true
+	case overlayPassphrase:
+		return m.handlePassphraseKey(key), true
 	default:
 		return nil, true
 	}
@@ -110,7 +122,7 @@ func helpText(screen screenKind) string {
 	case screenFleet:
 		return "j/k выбор · enter открыть · / поиск · g группа · ! проблемы · v превью · " + common
 	case screenDashboard:
-		return "p процессы · o порты · h история · l логи · d Docker · " + common
+		return "r переподключить · p процессы · o порты · h история · l логи · d Docker · " + common
 	case screenHistory:
 		return "1-5 диапазон · j/k метрика · h/l курсор · r обновить · " + common
 	case screenLogs:
