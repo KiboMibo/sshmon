@@ -10,11 +10,18 @@ import (
 	"github.com/kibomibo/sshmon/internal/sshx"
 )
 
+type pollRunner interface {
+	Run(string, time.Duration) (string, error)
+	Reset()
+	SetPassphrase([]byte)
+}
+
 type serverState struct {
-	cfg  config.Server
-	cli  *sshx.Client
-	m    Metrics
-	prev *counters
+	cfg    config.Server
+	cli    *sshx.Client
+	runner pollRunner
+	m      Metrics
+	prev   *counters
 }
 
 type Collector struct {
@@ -29,7 +36,11 @@ type Collector struct {
 func New(cfg *config.Config) *Collector {
 	c := &Collector{cfg: cfg, subscribers: make(map[uint64]chan Event)}
 	for _, s := range cfg.Servers {
-		c.states = append(c.states, &serverState{cfg: s, cli: sshx.New(s), m: Metrics{Name: s.Name, Group: s.Group}})
+		client := sshx.New(s)
+		c.states = append(c.states, &serverState{
+			cfg: s, cli: client, runner: client,
+			m: Metrics{Name: s.Name, Group: s.Group},
+		})
 	}
 	return c
 }
@@ -83,15 +94,15 @@ func (c *Collector) pollAll() {
 	wg.Wait()
 }
 
-func (c *Collector) poll(st *serverState) {
+func (c *Collector) poll(st *serverState) error {
 	now := time.Now()
-	raw, err := st.cli.Run(sampleCmd, 15*time.Second)
+	raw, err := st.runner.Run(sampleCmd, 15*time.Second)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err != nil {
 		st.m = Metrics{Name: st.cfg.Name, Group: st.cfg.Group, Time: now, Online: false, Err: err.Error()}
 		st.prev = nil
-		return
+		return err
 	}
 	s := parseSample(raw, now)
 	m := Metrics{
@@ -111,6 +122,40 @@ func (c *Collector) poll(st *serverState) {
 	}
 	st.prev = &s.c
 	st.m = m
+	return nil
+}
+
+// Reconnect сбрасывает соединение сервера и немедленно обновляет его метрики.
+func (c *Collector) Reconnect(server string) error {
+	state, err := c.stateByName(server)
+	if err != nil {
+		return err
+	}
+	state.runner.Reset()
+	err = c.poll(state)
+	c.publish(Event{Snapshot: c.Snapshot()})
+	return err
+}
+
+// SetPassphrase передаёт секрет выбранному SSH-клиенту только в память процесса.
+func (c *Collector) SetPassphrase(server string, passphrase []byte) error {
+	state, err := c.stateByName(server)
+	if err != nil {
+		return err
+	}
+	state.runner.SetPassphrase(passphrase)
+	return nil
+}
+
+func (c *Collector) stateByName(name string) (*serverState, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, state := range c.states {
+		if state.cfg.Name == name {
+			return state, nil
+		}
+	}
+	return nil, fmt.Errorf("неизвестный сервер %q", name)
 }
 
 // Snapshot — копия текущего состояния всех серверов + детекция проблем.

@@ -17,10 +17,16 @@ import (
 	"github.com/kibomibo/sshmon/internal/config"
 )
 
+var (
+	ErrPassphraseRequired = errors.New("требуется passphrase для SSH-ключа")
+	ErrInvalidPassphrase  = errors.New("неверная passphrase для SSH-ключа")
+)
+
 type Client struct {
-	cfg config.Server
-	mu  sync.Mutex
-	c   *ssh.Client
+	cfg        config.Server
+	mu         sync.Mutex
+	c          *ssh.Client
+	passphrase []byte
 }
 
 func New(cfg config.Server) *Client { return &Client{cfg: cfg} }
@@ -31,8 +37,14 @@ func (c *Client) conn() (*ssh.Client, error) {
 	if c.c != nil {
 		return c.c, nil
 	}
-	auth := authMethods(c.cfg)
+	auth, needsPassphrase, err := authMethods(c.cfg, c.passphrase)
+	if err != nil {
+		return nil, err
+	}
 	if len(auth) == 0 {
+		if needsPassphrase {
+			return nil, ErrPassphraseRequired
+		}
 		return nil, fmt.Errorf("нет способа аутентификации (key/agent/password)")
 	}
 	cl, err := ssh.Dial("tcp", c.cfg.Addr(), &ssh.ClientConfig{
@@ -42,19 +54,42 @@ func (c *Client) conn() (*ssh.Client, error) {
 		Timeout:         10 * time.Second,
 	})
 	if err != nil {
+		if needsPassphrase {
+			return nil, fmt.Errorf("%w: альтернативная аутентификация не удалась", ErrPassphraseRequired)
+		}
 		return nil, err
 	}
 	c.c = cl
 	return cl, nil
 }
 
+// SetPassphrase replaces the in-memory key passphrase and resets the connection.
+func (c *Client) SetPassphrase(passphrase []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	clear(c.passphrase)
+	c.passphrase = append(c.passphrase[:0], passphrase...)
+	c.dropLocked()
+}
+
+// Reset closes the cached connection so the next operation dials again.
+func (c *Client) Reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.dropLocked()
+}
+
 func (c *Client) drop() {
 	c.mu.Lock()
+	c.dropLocked()
+	c.mu.Unlock()
+}
+
+func (c *Client) dropLocked() {
 	if c.c != nil {
 		c.c.Close()
 		c.c = nil
 	}
-	c.mu.Unlock()
 }
 
 // Run выполняет команду и возвращает stdout с таймаутом.
@@ -112,12 +147,27 @@ func runCommand(ctx context.Context, output func() ([]byte, error), drop func())
 	}
 }
 
-func authMethods(cfg config.Server) []ssh.AuthMethod {
+func authMethods(cfg config.Server, passphrase []byte) ([]ssh.AuthMethod, bool, error) {
 	var out []ssh.AuthMethod
+	needsPassphrase := false
 	if cfg.Key != "" {
 		if b, err := os.ReadFile(cfg.Key); err == nil {
-			if signer, err := ssh.ParsePrivateKey(b); err == nil {
+			signer, parseErr := ssh.ParsePrivateKey(b)
+			if parseErr == nil {
 				out = append(out, ssh.PublicKeys(signer))
+			} else {
+				var missing *ssh.PassphraseMissingError
+				if errors.As(parseErr, &missing) {
+					if len(passphrase) == 0 {
+						needsPassphrase = true
+					} else {
+						signer, err = ssh.ParsePrivateKeyWithPassphrase(b, passphrase)
+						if err != nil {
+							return nil, false, ErrInvalidPassphrase
+						}
+						out = append(out, ssh.PublicKeys(signer))
+					}
+				}
 			}
 		}
 	}
@@ -129,7 +179,7 @@ func authMethods(cfg config.Server) []ssh.AuthMethod {
 	if cfg.Password != "" {
 		out = append(out, ssh.Password(cfg.Password))
 	}
-	return out
+	return out, needsPassphrase, nil
 }
 
 func hostKeyCallback(cfg config.Server) ssh.HostKeyCallback {
