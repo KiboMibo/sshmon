@@ -28,9 +28,15 @@ import (
 func main() {
 	cfgPath := flag.String("config", config.DefaultPath(), "путь к config.yaml")
 	headless := flag.Bool("headless", false, "без TUI: сбор метрик + MCP-сервер на stdio")
+	importFlag := flag.Bool("import", false, "добавить серверы из ~/.ssh/config в существующий конфиг")
 	flag.Parse()
+	if *importFlag && *headless {
+		fmt.Fprintln(os.Stderr, "sshmon: --import нельзя использовать вместе с --headless")
+		os.Exit(1)
+	}
 
 	cfg, err := config.Load(*cfgPath)
+	loaded := err == nil
 	if err != nil {
 		missing := errors.Is(err, fs.ErrNotExist)
 		empty := errors.Is(err, config.ErrNoServers)
@@ -44,6 +50,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "sshmon: %v\n", err)
 			os.Exit(1)
 		}
+	}
+	if *importFlag && loaded {
+		cfg = importServers(*cfgPath, cfg)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -157,6 +166,42 @@ func firstRun(cfgPath string, populate bool) *config.Config {
 		os.Exit(1)
 	}
 	return cfg
+}
+
+func importServers(cfgPath string, cfg *config.Config) *config.Config {
+	hosts, err := config.ParseSSHConfig(config.DefaultSSHConfigPath())
+	if err != nil || len(hosts) == 0 {
+		fmt.Fprintln(os.Stderr, "sshmon: в ~/.ssh/config нет хостов для импорта")
+		return cfg
+	}
+	hosts = config.RemainingHosts(hosts, cfg.Servers)
+	if len(hosts) == 0 {
+		fmt.Fprintln(os.Stderr, "Все хосты из ~/.ssh/config уже есть в конфиге.")
+		return cfg
+	}
+
+	servers, err := setup.Run(hosts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sshmon: ошибка выбора серверов: %v\n", err)
+		os.Exit(1)
+	}
+	if len(servers) == 0 {
+		fmt.Fprintln(os.Stderr, "Ничего не выбрано — конфиг не изменён.")
+		return cfg
+	}
+
+	added, err := config.AddServers(cfgPath, servers)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sshmon: не удалось сохранить конфиг: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Добавлено серверов: %d.\n", added)
+	updated, err := config.Load(cfgPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sshmon: не удалось загрузить обновлённый конфиг: %v\n", err)
+		os.Exit(1)
+	}
+	return updated
 }
 
 func writeTemplateAndExit(cfgPath string, loadErr error) {

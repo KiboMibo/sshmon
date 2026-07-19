@@ -89,6 +89,40 @@ func PopulateServers(path string, servers []Server) error {
 	return replaceFile(path, body)
 }
 
+// AddServers атомарно дописывает новые серверы в существующий конфиг.
+// Серверы с уже занятыми именами пропускаются; без новых имён файл не трогается.
+func AddServers(path string, servers []Server) (int, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	var c Config
+	if err := yaml.Unmarshal(b, &c); err != nil {
+		return 0, fmt.Errorf("%s: %w", path, err)
+	}
+	taken := map[string]bool{}
+	for _, s := range c.Servers {
+		taken[s.Name] = true
+	}
+	added := 0
+	for _, s := range servers {
+		if taken[s.Name] {
+			continue
+		}
+		taken[s.Name] = true
+		c.Servers = append(c.Servers, s)
+		added++
+	}
+	if added == 0 {
+		return 0, nil
+	}
+	body, err := yaml.Marshal(&c)
+	if err != nil {
+		return 0, err
+	}
+	return added, replaceFile(path, body)
+}
+
 func replaceFile(path string, body []byte) error {
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, ".config-*.yaml")

@@ -63,7 +63,13 @@ LLM: OpenAI, Anthropic или любой OpenAI-совместимый API (Olla
 sshmon                  # TUI
 sshmon --headless       # фон: сбор метрик + MCP-сервер на stdio
 sshmon --config /path/to/config.yaml
+sshmon --import         # выбрать и добавить новые хосты из ~/.ssh/config
 ```
+
+`sshmon --import` открывает тот же выбор хостов, что и при первом запуске.
+Алиасы, уже присутствующие в `servers` как `name`, скрываются из списка.
+Выбранные серверы добавляются без изменения остальных настроек, после чего
+запускается TUI.
 
 Глобальные клавиши: `c` — Chat, `/` — Search, `:` — Command Palette,
 `?` — Help, `esc` — закрыть оверлей или вернуться назад, `q` — выход из Fleet.

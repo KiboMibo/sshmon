@@ -150,6 +150,21 @@ func splitKV(line string) (key, val string, ok bool) {
 	return "", "", false
 }
 
+// RemainingHosts возвращает хосты, чьи алиасы ещё не заняты серверами конфига.
+func RemainingHosts(hosts []SSHHost, servers []Server) []SSHHost {
+	taken := map[string]bool{}
+	for _, s := range servers {
+		taken[s.Name] = true
+	}
+	var out []SSHHost
+	for _, h := range hosts {
+		if !taken[h.Alias] {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 // HostsToServers превращает ssh-хосты в конфиг sshmon.
 // SourcePath и Position — внутренняя идентичность для пикера,
 // в итоговый Server переносится только Group.
