@@ -57,6 +57,20 @@ func byteValue(value float64) string {
 	return fmt.Sprintf("%.1f%s", value, units[unit])
 }
 
+func composeOverlay(screen, overlay string, height int) string {
+	if height <= 0 {
+		return screen + "\n\n" + overlay
+	}
+	screenLines := strings.Split(screen, "\n")
+	overlayLines := strings.Split(overlay, "\n")
+	keep := max(0, height-len(overlayLines)-1)
+	if keep > len(screenLines) {
+		keep = len(screenLines)
+	}
+	lines := append(screenLines[:keep], "")
+	return strings.Join(append(lines, overlayLines...), "\n")
+}
+
 func fitLine(value string, width int) string {
 	if width < 1 || lipgloss.Width(value) <= width {
 		return value

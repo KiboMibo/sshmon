@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/kibomibo/sshmon/internal/collect"
 )
 
@@ -30,6 +32,9 @@ func (m Model) renderDashboard() string {
 	if server.Err != "" {
 		lines = append(lines, fitLine("ошибка SSH: "+server.Err, contentWidth))
 	}
+	if !server.Online && server.Err != "" {
+		lines = append(lines, criticalStyle.Render("сервер недоступен — нажмите r для переподключения"))
+	}
 	lines = append(lines,
 		"",
 		titleStyle.Render("CPU")+"  "+percentLine("", server.CPUPct, contentWidth-7),
@@ -41,12 +46,12 @@ func (m Model) renderDashboard() string {
 		"",
 		titleStyle.Render("СЕТЬ")+"    "+networkText(server),
 		titleStyle.Render("ДИСКИ / IO")+"  "+diskText(server),
-		"",
-		titleStyle.Render("ПРОБЛЕМЫ")+"  "+m.dashboardIssues(server.Name),
 	)
-	if m.layout.wide {
-		lines = append(lines, wideDeviceLines(server, contentWidth)...)
+	if tables := deviceTables(server, m.layout); len(tables) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, tables...)
 	}
+	lines = append(lines, "", titleStyle.Render("ПРОБЛЕМЫ")+"  "+m.dashboardIssues(server.Name))
 	lines = append(lines, "", dimStyle.Render("r переподключить · p процессы · o порты · h история · l логи · d контейнеры · c чат · esc назад"))
 	return strings.Join(lines, "\n")
 }
@@ -111,13 +116,34 @@ func (m Model) dashboardIssues(name string) string {
 	return fitLine(strings.Join(parts, " · "), max(20, m.layout.width-12))
 }
 
-func wideDeviceLines(server collect.Metrics, width int) []string {
-	lines := make([]string, 0, len(server.Net)+len(server.Disks))
+func deviceTables(server collect.Metrics, layout layoutState) []string {
+	net := netTable(server)
+	disks := diskTable(server)
+	if layout.wide && len(net) > 0 && len(disks) > 0 {
+		left := lipgloss.NewStyle().Width(max(38, layout.width/2)).Render(strings.Join(net, "\n"))
+		return []string{lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Join(disks, "\n"))}
+	}
+	return append(net, disks...)
+}
+
+func netTable(server collect.Metrics) []string {
+	if len(server.Net) == 0 {
+		return nil
+	}
+	rows := []string{dimStyle.Render(fmt.Sprintf("%-14s %10s %10s", "ИНТЕРФЕЙС", "RX/S", "TX/S"))}
 	for _, device := range server.Net {
-		lines = append(lines, fitLine(fmt.Sprintf("  net %-10s rx %s/s tx %s/s", device.Iface, byteValue(device.RxBps), byteValue(device.TxBps)), width))
+		rows = append(rows, fmt.Sprintf("%-14s %10s %10s", device.Iface, byteValue(device.RxBps), byteValue(device.TxBps)))
 	}
+	return rows
+}
+
+func diskTable(server collect.Metrics) []string {
+	if len(server.Disks) == 0 {
+		return nil
+	}
+	rows := []string{dimStyle.Render(fmt.Sprintf("%-16s %7s %10s", "ТОЧКА", "ЗАНЯТО", "СВОБОДНО"))}
 	for _, disk := range server.Disks {
-		lines = append(lines, fitLine(fmt.Sprintf("  disk %-10s %3.0f%% · свободно %s", disk.Mount, disk.UsedPct, byteValue(float64(disk.AvailKB)*1024)), width))
+		rows = append(rows, fmt.Sprintf("%-16s %6.0f%% %10s", disk.Mount, disk.UsedPct, byteValue(float64(disk.AvailKB)*1024)))
 	}
-	return lines
+	return rows
 }

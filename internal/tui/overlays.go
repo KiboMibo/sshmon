@@ -83,7 +83,12 @@ func (m Model) renderOverlay() string {
 	case overlayPassphrase:
 		content = m.renderPassphrase()
 	}
-	return overlayStyle.Copy().BorderStyle(lipgloss.RoundedBorder()).Padding(1, 2).Render(content)
+	box := overlayStyle.Copy().BorderStyle(lipgloss.RoundedBorder()).Padding(1, 2)
+	rendered := box.Render(content)
+	if m.layout.width > 0 && lipgloss.Width(rendered) > m.layout.width {
+		rendered = box.Width(m.layout.width - frameOverhead).Render(content)
+	}
+	return rendered
 }
 
 func (m *Model) handleOverlayKey(key tea.KeyMsg) (tea.Cmd, bool) {

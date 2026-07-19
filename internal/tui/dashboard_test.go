@@ -45,6 +45,62 @@ func TestDashboardFitsMandatorySectionsAtMinimumSize(t *testing.T) {
 	}
 }
 
+func TestDashboardShowsInterfaceAndDiskTables(t *testing.T) {
+	// Given: an online server with two interfaces and two mounts.
+	now := time.Date(2026, 7, 19, 21, 0, 0, 0, time.UTC)
+	m := Model{
+		screen:   screenDashboard,
+		selected: 0,
+		snapshot: collect.Snapshot{
+			Time: now,
+			Servers: []collect.Metrics{{
+				Name: "web", Hostname: "web-01", Online: true, Time: now,
+				NumCPU: 4, CPUPct: 10, MemPct: 30, MemTotalKB: 4 << 20, MemAvailKB: 3 << 20,
+				Disks: []collect.DiskUsage{
+					{Mount: "/", UsedPct: 53, AvailKB: 26 << 20},
+					{Mount: "/boot", UsedPct: 17, AvailKB: 800 << 10},
+				},
+				IO: []collect.DiskIO{{Dev: "sda", ReadBps: 1024, WriteBps: 2048}},
+				Net: []collect.NetRate{
+					{Iface: "ens32", RxBps: 512, TxBps: 1024},
+					{Iface: "ens33", RxBps: 2048, TxBps: 4096},
+				},
+			}},
+		},
+	}
+
+	// When: the dashboard is rendered on a wide terminal.
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	view := updated.(Model).View()
+
+	// Then: interface and disk tables show headers and every row.
+	for _, want := range []string{"ИНТЕРФЕЙС", "RX/S", "TX/S", "ТОЧКА", "ЗАНЯТО", "СВОБОДНО", "ens32", "ens33", "/boot"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("dashboard tables missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestDashboardOfflineShowsReconnectHint(t *testing.T) {
+	// Given: an offline server with a stale sample.
+	now := time.Date(2026, 7, 19, 21, 0, 0, 0, time.UTC)
+	m := Model{
+		screen: screenDashboard,
+		snapshot: collect.Snapshot{Time: now, Servers: []collect.Metrics{{
+			Name: "db", Hostname: "db-01", Online: false, Err: "dial timeout", Time: now.Add(-time.Minute),
+		}}},
+	}
+
+	// When: the dashboard is rendered.
+	m.layout = newLayout(100, 24)
+	view := m.View()
+
+	// Then: a prominent reconnect hint is visible.
+	if !strings.Contains(view, "нажмите r") {
+		t.Fatalf("offline dashboard misses reconnect hint:\n%s", view)
+	}
+}
+
 func TestDashboardRetainsLastMetricsWhenServerIsOfflineOrStale(t *testing.T) {
 	// Given: an offline server whose last successful metrics are two minutes old.
 	now := time.Date(2026, 7, 18, 22, 0, 0, 0, time.UTC)
