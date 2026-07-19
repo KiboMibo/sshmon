@@ -4,6 +4,7 @@ const (
 	minimumWidth  = 60
 	minimumHeight = 16
 	wideWidth     = 100
+	frameOverhead = 2
 )
 
 type layoutState struct {
@@ -15,8 +16,8 @@ type layoutState struct {
 
 func newLayout(width, height int) layoutState {
 	return layoutState{
-		width:    width,
-		height:   height,
+		width:    width - frameOverhead,
+		height:   height - frameOverhead,
 		wide:     width >= wideWidth && height >= minimumHeight,
 		tooSmall: width < minimumWidth || height < minimumHeight,
 	}

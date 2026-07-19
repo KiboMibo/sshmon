@@ -57,7 +57,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.layout = newLayout(msg.Width, msg.Height)
-		m.logs.resize(msg.Width, msg.Height)
+		m.logs.resize(m.layout.width, m.layout.height)
 		m.resizeOverlay(msg.Width, msg.Height)
 		return m, nil
 	case collectorEventMsg:
@@ -151,7 +151,7 @@ func (m Model) View() string {
 	if m.layout.tooSmall {
 		return "sshmon\n\nувеличьте терминал минимум до 60×16"
 	}
-	body := m.renderScreen()
+	body := frameStyle.Width(m.layout.width).Render(m.renderScreen())
 	if m.overlay != overlayNone {
 		body += "\n\n" + m.renderOverlay()
 	}
