@@ -30,7 +30,7 @@ func (m *Model) ensureFleet() {
 }
 
 func (m *Model) moveFleet(delta int) {
-	visible := filterServers(m.snapshot, m.configServers(), m.fleet.filter)
+	visible := groupedServers(m.snapshot, m.configServers(), m.fleet.filter)
 	if len(visible) == 0 {
 		return
 	}
@@ -46,7 +46,7 @@ func (m *Model) moveFleet(delta int) {
 }
 
 func (m *Model) selectNearestVisible() {
-	visible := filterServers(m.snapshot, m.configServers(), m.fleet.filter)
+	visible := groupedServers(m.snapshot, m.configServers(), m.fleet.filter)
 	if len(visible) == 0 {
 		return
 	}
@@ -72,6 +72,28 @@ func abs(value int) int {
 	return value
 }
 
+func fleetTableWidth(total int) int {
+	return max(42, total*65/100)
+}
+
+func groupedServers(snapshot collect.Snapshot, servers []config.Server, filter fleetFilter) []int {
+	visible := filterServers(snapshot, servers, filter)
+	order := make([]string, 0)
+	buckets := make(map[string][]int)
+	for _, index := range visible {
+		group := snapshot.Servers[index].Group
+		if _, seen := buckets[group]; !seen {
+			order = append(order, group)
+		}
+		buckets[group] = append(buckets[group], index)
+	}
+	grouped := make([]int, 0, len(visible))
+	for _, group := range order {
+		grouped = append(grouped, buckets[group]...)
+	}
+	return grouped
+}
+
 func (m Model) configServers() []config.Server {
 	if m.config == nil {
 		return nil
@@ -81,11 +103,16 @@ func (m Model) configServers() []config.Server {
 
 func (m Model) renderFleet() string {
 	m.ensureFleet()
-	visible := filterServers(m.snapshot, m.configServers(), m.fleet.filter)
+	visible := groupedServers(m.snapshot, m.configServers(), m.fleet.filter)
 	var rows strings.Builder
 	rows.WriteString(titleStyle.Render("sshmon · Серверы") + "\n")
-	rows.WriteString(dimStyle.Render("  СОСТ  ИМЯ             ГРУППА       CPU   MEM   LOAD   ВОЗРАСТ") + "\n")
+	rows.WriteString(dimStyle.Render("  СОСТ  ИМЯ             CPU   MEM   LOAD   UPTIME") + "\n")
+	previousGroup := ""
 	for _, index := range visible {
+		if group := m.snapshot.Servers[index].Group; group != "" && group != previousGroup {
+			rows.WriteString(titleStyle.Render(group) + "\n")
+			previousGroup = group
+		}
 		rows.WriteString(m.renderFleetRow(index) + "\n")
 	}
 	if len(visible) == 0 {
@@ -94,7 +121,7 @@ func (m Model) renderFleet() string {
 	body := rows.String()
 	if m.layout.wide && m.fleet.preview {
 		body = lipgloss.JoinHorizontal(lipgloss.Top,
-			lipgloss.NewStyle().Width(max(42, m.layout.width/2)).Render(strings.TrimSuffix(body, "\n")),
+			lipgloss.NewStyle().Width(fleetTableWidth(m.layout.width)).Render(strings.TrimSuffix(body, "\n")),
 			"  ", m.renderFleetPreview())
 	}
 	return body + "\n" + dimStyle.Render("enter открыть · / поиск · g группа · ! проблемы · v вид · c чат · : команды · ? помощь · q выход")
@@ -106,9 +133,9 @@ func (m Model) renderFleetRow(index int) string {
 	if index == m.selected {
 		cursor = "▶ "
 	}
-	return fmt.Sprintf("%s%s  %-15s %-12s %4.0f%% %4.0f%% %6.2f %8s",
-		cursor, statusGlyph(server), truncateCells(server.Name, 15), truncateCells(server.Group, 12),
-		server.CPUPct, server.MemPct, server.Load1, metricAge(m.snapshot.Time, server.Time))
+	return fmt.Sprintf("%s%s  %-15s %4.0f%% %4.0f%% %6.2f %8s",
+		cursor, statusGlyph(server), truncateCells(server.Name, 15),
+		server.CPUPct, server.MemPct, server.Load1, formatUptime(server.Uptime))
 }
 
 func (m Model) renderFleetPreview() string {
@@ -143,18 +170,15 @@ func statusText(server collect.Metrics) string {
 	return "доступен"
 }
 
-func metricAge(now, sampled time.Time) string {
-	if sampled.IsZero() {
+func formatUptime(d time.Duration) string {
+	if d <= 0 {
 		return "—"
 	}
-	if now.IsZero() {
-		now = time.Now()
+	hours := int(d.Hours())
+	if hours >= 24 {
+		return fmt.Sprintf("%dd%dh", hours/24, hours%24)
 	}
-	age := now.Sub(sampled)
-	if age < 0 {
-		age = 0
-	}
-	return fmt.Sprintf("%ds", int(age.Seconds()))
+	return fmt.Sprintf("%dh%dm", hours, int(d.Minutes())%60)
 }
 
 func issuesForServer(issues []collect.Issue, name string) []collect.Issue {
