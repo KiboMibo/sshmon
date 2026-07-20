@@ -25,11 +25,22 @@ import (
 	"github.com/kibomibo/sshmon/internal/tui"
 )
 
+var version = "0.2.0"
+
+func writeVersion(w io.Writer, v string) {
+	fmt.Fprintf(w, "sshmon %s\n", v)
+}
+
 func main() {
 	cfgPath := flag.String("config", config.DefaultPath(), "путь к config.yaml")
 	headless := flag.Bool("headless", false, "без TUI: сбор метрик + MCP-сервер на stdio")
 	importFlag := flag.Bool("import", false, "добавить серверы из ~/.ssh/config в существующий конфиг")
+	versionFlag := flag.Bool("version", false, "показать версию и выйти")
 	flag.Parse()
+	if *versionFlag {
+		writeVersion(os.Stdout, version)
+		return
+	}
 	if *importFlag && *headless {
 		fmt.Fprintln(os.Stderr, "sshmon: --import нельзя использовать вместе с --headless")
 		os.Exit(1)

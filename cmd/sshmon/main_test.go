@@ -14,6 +14,19 @@ import (
 	"github.com/kibomibo/sshmon/internal/history"
 )
 
+func TestWriteVersionPrintsNameAndVersion(t *testing.T) {
+	// Given: a version string and an output buffer.
+	var out bytes.Buffer
+
+	// When: the version line is written.
+	writeVersion(&out, "1.2.3")
+
+	// Then: output names sshmon with the exact version and a trailing newline.
+	if got := out.String(); got != "sshmon 1.2.3\n" {
+		t.Fatalf("version output = %q", got)
+	}
+}
+
 func TestOpenHistoryFailsSoftWhenDatabaseCannotOpen(t *testing.T) {
 	// Given: history points beneath a regular file, so SQLite cannot create its directory.
 	parent := filepath.Join(t.TempDir(), "file")
