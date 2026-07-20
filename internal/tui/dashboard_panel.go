@@ -91,13 +91,53 @@ func joinBoxes(left, right []string) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(left, "\n"), "  ", strings.Join(right, "\n"))
 }
 
+func equalizeBoxes(left, right []string) ([]string, []string) {
+	for len(left) < len(right) {
+		left = append(left, dimStyle.Render("NO DATA"))
+	}
+	for len(right) < len(left) {
+		right = append(right, dimStyle.Render("NO DATA"))
+	}
+	return left, right
+}
+
+func containerStatusDot(status string) string {
+	switch {
+	case strings.HasPrefix(status, "Up"):
+		return goodStyle.Render("●")
+	case strings.HasPrefix(status, "Exited"):
+		return criticalStyle.Render("●")
+	default:
+		return dimStyle.Render("●")
+	}
+}
+
+func unitStateText(active, sub string) string {
+	state := strings.TrimSpace(active + " " + sub)
+	switch {
+	case active == "active" && sub == "running":
+		return goodStyle.Render(state)
+	case active == "failed":
+		return criticalStyle.Render(state)
+	case active == "activating":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("135")).Render(state)
+	default:
+		return dimStyle.Render(state)
+	}
+}
+
 func (m Model) dashboardDockerContent() []string {
 	if len(m.dashboard.containers.items) == 0 || m.dashboard.containers.status == diagnosticsUnsupported || m.dashboard.containers.status == diagnosticsError {
 		return []string{criticalStyle.Render("DOCKER NOT RUNNING")}
 	}
-	rows := []string{dimStyle.Render(fmt.Sprintf("%-16s %-12s %6s %6s", "ИМЯ", "СТАТУС", "CPU", "MEM"))}
+	rows := []string{dimStyle.Render(fmt.Sprintf("%-2s %-14s %-10s %5s %5s  %s", " ", "ИМЯ", "СТАТУС", "CPU", "MEM", "ПОРТЫ"))}
 	for _, container := range m.dashboard.containers.items {
-		rows = append(rows, fmt.Sprintf("%-16s %-12s %5.1f%% %5.1f%%", truncateCells(container.Name, 16), truncateCells(container.Status, 12), container.CPUPct, container.MemPct))
+		rows = append(rows, fmt.Sprintf("%s %-14s %-10s %4.0f%% %4.0f%%  %s",
+			containerStatusDot(container.Status),
+			truncateCells(container.Name, 14),
+			truncateCells(container.Status, 10),
+			container.CPUPct, container.MemPct,
+			truncateCells(container.Ports, 20)))
 	}
 	return rows
 }
@@ -121,8 +161,7 @@ func (m Model) dashboardUnitsContent() []string {
 		if index == cursor {
 			prefix = "▶ "
 		}
-		state := strings.TrimSpace(unit.Active + " " + unit.Sub)
-		rows = append(rows, fmt.Sprintf("%s%-24s %s", prefix, truncateCells(unit.Name, 24), state))
+		rows = append(rows, fmt.Sprintf("%s%-24s %s", prefix, truncateCells(unit.Name, 24), unitStateText(unit.Active, unit.Sub)))
 	}
 	return rows
 }

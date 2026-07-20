@@ -41,16 +41,16 @@ func TestParseProcessesSupportsGNUAndBusyBox(t *testing.T) {
 
 func TestParseContainersCombinesListAndStats(t *testing.T) {
 	t.Parallel()
-	// Given read-only docker list and one-shot stats output with a malformed row.
-	list := "abc123\tweb\tnginx:latest\tUp 2 hours\nbad\n"
+	// Given read-only docker list (now with ports column) and one-shot stats output with a malformed row.
+	list := "abc123\tweb\tnginx:latest\tUp 2 hours\t0.0.0.0:8080->80/tcp\nbad\n"
 	stats := "abc123\t2.50%\t12.75%\t64MiB / 512MiB\n"
 	// When both outputs are parsed.
 	got, err := ParseContainers(list, stats)
-	// Then status and resource usage are combined by container ID.
+	// Then status, resource usage, and exposed ports are combined by container ID.
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Container{ID: "abc123", Name: "web", Image: "nginx:latest", Status: "Up 2 hours", CPUPct: 2.5, MemPct: 12.75, MemUsage: "64MiB / 512MiB"}
+	want := Container{ID: "abc123", Name: "web", Image: "nginx:latest", Status: "Up 2 hours", Ports: "0.0.0.0:8080->80/tcp", CPUPct: 2.5, MemPct: 12.75, MemUsage: "64MiB / 512MiB"}
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}

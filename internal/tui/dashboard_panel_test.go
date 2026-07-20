@@ -102,3 +102,144 @@ func TestDashboardWideDrawsBorderedPanelsWithLocalHints(t *testing.T) {
 		}
 	}
 }
+
+func TestEqualizeBoxesPadsShorterWithNoData(t *testing.T) {
+	t.Parallel()
+	// Given two content slices of different heights.
+	left := []string{"row1", "row2", "row3"}
+	right := []string{"only-one"}
+	// When the slices are equalized.
+	l, r := equalizeBoxes(left, right)
+	// Then both have the same length and the shorter is padded with NO DATA rows.
+	if len(l) != len(r) {
+		t.Fatalf("len(left)=%d != len(right)=%d", len(l), len(r))
+	}
+	if len(r) != 3 {
+		t.Fatalf("want 3 rows each, got %d", len(r))
+	}
+	if !strings.Contains(r[1], "NO DATA") || !strings.Contains(r[2], "NO DATA") {
+		t.Fatalf("right not padded with NO DATA: %#v", r)
+	}
+}
+
+func TestContainerStatusDotDerivesFromStatus(t *testing.T) {
+	t.Parallel()
+	// Given container statuses in various states.
+	// When the status dot is derived.
+	up := containerStatusDot("Up 2 hours")
+	exited := containerStatusDot("Exited (0) 5 min ago")
+	paused := containerStatusDot("Paused")
+	// Then every status emits the dot glyph.
+	for _, dot := range []string{up, exited, paused} {
+		if !strings.Contains(dot, "●") {
+			t.Fatalf("dot glyph missing: %q", dot)
+		}
+	}
+}
+
+func TestUnitStateTextColorsByActiveSub(t *testing.T) {
+	t.Parallel()
+	// Given systemd unit active/sub combinations.
+	// When the state text is derived.
+	running := unitStateText("active", "running")
+	failed := unitStateText("failed", "failed")
+	inactive := unitStateText("inactive", "dead")
+	activating := unitStateText("activating", "start-pre")
+	// Then each retains the state words for identification.
+	if !strings.Contains(running, "running") {
+		t.Fatalf("running text wrong: %q", running)
+	}
+	if !strings.Contains(failed, "failed") {
+		t.Fatalf("failed text wrong: %q", failed)
+	}
+	if !strings.Contains(inactive, "dead") {
+		t.Fatalf("inactive text wrong: %q", inactive)
+	}
+	if !strings.Contains(activating, "start-pre") {
+		t.Fatalf("activating text wrong: %q", activating)
+	}
+}
+
+func TestDockerContentShowsStatusDotAndPorts(t *testing.T) {
+	t.Parallel()
+	// Given a dashboard with one running container exposing ports.
+	m := dashboardWorkspaceFixture()
+	m.dashboard.containers = dashboardContainersState{
+		items:  []collect.Container{{Name: "api", Status: "Up 2 hours", Ports: "0.0.0.0:8080->80/tcp", CPUPct: 3, MemPct: 4}},
+		status: diagnosticsReady,
+	}
+	// When docker content is rendered.
+	content := m.dashboardDockerContent()
+	// Then it shows a status dot, the container name, and the ports string.
+	joined := strings.Join(content, "\n")
+	if !strings.Contains(joined, "●") {
+		t.Fatalf("missing status dot: %s", joined)
+	}
+	if !strings.Contains(joined, "api") {
+		t.Fatalf("missing container name: %s", joined)
+	}
+	if !strings.Contains(joined, "8080") {
+		t.Fatalf("missing ports: %s", joined)
+	}
+}
+
+func TestSystemdContentColorsStateText(t *testing.T) {
+	t.Parallel()
+	// Given a dashboard with units in various states.
+	m := dashboardWorkspaceFixture()
+	m.dashboard.units = dashboardUnitsState{
+		items: []collect.SystemdUnit{
+			{Name: "sshd.service", Active: "active", Sub: "running"},
+			{Name: "fail.service", Active: "failed", Sub: "failed"},
+		},
+		status: diagnosticsReady,
+	}
+	// When systemd content is rendered.
+	content := m.dashboardUnitsContent()
+	// Then both unit names and state texts appear.
+	joined := strings.Join(content, "\n")
+	if !strings.Contains(joined, "sshd.service") || !strings.Contains(joined, "running") {
+		t.Fatalf("missing running unit: %s", joined)
+	}
+	if !strings.Contains(joined, "fail.service") || !strings.Contains(joined, "failed") {
+		t.Fatalf("missing failed unit: %s", joined)
+	}
+}
+
+func TestDashboardWideLayoutSwapsRowsAndEqualizesHeight(t *testing.T) {
+	t.Parallel()
+	// Given a wide dashboard fixture with mixed content.
+	m := dashboardWorkspaceFixture()
+	m.layout = newLayout(120, 30)
+	// When the full view is rendered.
+	view := m.View()
+	// Then МЕТРИКИ and SYSTEMD are on the same line, СЕТЬ and DOCKER on the same line.
+	metricsLine, systemdLine := -1, -1
+	setLine, dockerLine := -1, -1
+	for i, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "╭─ МЕТРИКИ") {
+			metricsLine = i
+		}
+		if strings.Contains(line, "╭─ SYSTEMD") {
+			systemdLine = i
+		}
+		if strings.Contains(line, "╭─ СЕТЬ") {
+			setLine = i
+		}
+		if strings.Contains(line, "╭─ DOCKER") {
+			dockerLine = i
+		}
+	}
+	if metricsLine < 0 || systemdLine < 0 {
+		t.Fatalf("МЕТРИКИ=%d SYSTEMD=%d missing", metricsLine, systemdLine)
+	}
+	if metricsLine != systemdLine {
+		t.Fatalf("МЕТРИКИ line=%d != SYSTEMD line=%d", metricsLine, systemdLine)
+	}
+	if setLine < 0 || dockerLine < 0 {
+		t.Fatalf("СЕТЬ=%d DOCKER=%d missing", setLine, dockerLine)
+	}
+	if setLine != dockerLine {
+		t.Fatalf("СЕТЬ line=%d != DOCKER line=%d", setLine, dockerLine)
+	}
+}

@@ -30,14 +30,16 @@ func (m Model) renderDashboardWorkspace() string {
 	}
 	if m.layout.wide {
 		pw := m.dashboardPanelWidth()
+		metricsC, systemdC := equalizeBoxes(m.dashboardMetricsPanel(server), m.dashboardUnitsContent())
+		netC, dockerC := equalizeBoxes(dashboardNetworkContent(server), m.dashboardDockerContent())
 		lines = append(lines,
 			joinBoxes(
-				panelBox("МЕТРИКИ", "p процессы · o порты · h история", pw, m.dashboardMetricsPanel(server)),
-				panelBox("DOCKER", "d контейнеры", pw, m.dashboardDockerContent()),
+				panelBox("МЕТРИКИ", "p процессы · o порты · h история", pw, metricsC),
+				panelBox("SYSTEMD", "f фильтр · j/k · enter journal", pw, systemdC),
 			),
 			joinBoxes(
-				panelBox("СЕТЬ", "o порты", pw, dashboardNetworkContent(server)),
-				panelBox("SYSTEMD", "f фильтр · j/k · enter journal", pw, m.dashboardUnitsContent()),
+				panelBox("СЕТЬ", "o порты", pw, netC),
+				panelBox("DOCKER", "d контейнеры", pw, dockerC),
 			),
 		)
 		lines = append(lines, panelBox(m.dashboardLogsTitle(), "l логи · x системный лог", m.layout.width, m.dashboardLogsContent())...)

@@ -68,11 +68,11 @@ func ParseContainers(listRaw, statsRaw string) ([]Container, error) {
 	var out []Container
 	for _, line := range strings.Split(listRaw, "\n") {
 		fields := strings.Split(line, "\t")
-		if len(fields) != 4 || fields[0] == "" {
+		if len(fields) < 5 || fields[0] == "" {
 			continue
 		}
 		container := stats[fields[0]]
-		container.ID, container.Name, container.Image, container.Status = fields[0], fields[1], fields[2], fields[3]
+		container.ID, container.Name, container.Image, container.Status, container.Ports = fields[0], fields[1], fields[2], fields[3], fields[4]
 		out = append(out, container)
 	}
 	return out, nil

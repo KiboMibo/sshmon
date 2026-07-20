@@ -47,6 +47,7 @@ type Container struct {
 	Name     string
 	Image    string
 	Status   string
+	Ports    string
 	CPUPct   float64
 	MemPct   float64
 	MemUsage string
