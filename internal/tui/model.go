@@ -12,10 +12,11 @@ import (
 )
 
 type Model struct {
-	collector  *collect.Collector
-	llm        *llm.Client
-	chatClient chatClient
-	config     *config.Config
+	collector       *collect.Collector
+	llm             *llm.Client
+	chatClient      chatClient
+	dashboardSource dashboardSource
+	config          *config.Config
 
 	screen              screenKind
 	overlay             overlayKind
@@ -27,6 +28,7 @@ type Model struct {
 	processes           processScreen
 	ports               portScreen
 	containers          containerScreen
+	dashboard           dashboardWorkspace
 	history             historyScreen
 	historyDB           *historypkg.Service
 	logs                logsScreen
@@ -44,7 +46,7 @@ type Model struct {
 }
 
 func New(collector *collect.Collector, client *llm.Client, cfg *config.Config) Model {
-	m := Model{collector: collector, llm: client, chatClient: client, config: cfg, screen: screenFleet, fleet: newFleetModel(), logs: newLogsScreen(), logSource: collector, chat: newChatOverlay(), search: newSearchOverlay(), palette: newPaletteOverlay(), connections: collector}
+	m := Model{collector: collector, llm: client, chatClient: client, dashboardSource: collector, config: cfg, screen: screenFleet, fleet: newFleetModel(), logs: newLogsScreen(), logSource: collector, chat: newChatOverlay(), search: newSearchOverlay(), palette: newPaletteOverlay(), connections: collector}
 	if collector != nil {
 		m.snapshot = collector.Snapshot()
 		m.events, m.unsubscribe = collector.Subscribe(1)
@@ -57,6 +59,9 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.applyDashboardResult(msg) {
+		return m, nil
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.layout = newLayout(msg.Width, msg.Height)

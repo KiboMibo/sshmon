@@ -1,0 +1,104 @@
+package tui
+
+import (
+	"strings"
+
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/kibomibo/sshmon/internal/collect"
+)
+
+type dashboardUnitUI struct {
+	input       textinput.Model
+	initialized bool
+	active      bool
+	cursor      int
+}
+
+func (m *Model) ensureDashboardUnitUI() {
+	if m.dashboard.unitUI.initialized {
+		return
+	}
+	input := textinput.New()
+	input.Placeholder = "имя или описание юнита"
+	input.Width = max(12, min(40, m.layout.width/2))
+	m.dashboard.unitUI = dashboardUnitUI{input: input, initialized: true}
+}
+
+func (m Model) filteredDashboardUnits() []collect.SystemdUnit {
+	query := ""
+	if m.dashboard.unitUI.initialized {
+		query = strings.ToLower(strings.TrimSpace(m.dashboard.unitUI.input.Value()))
+	}
+	if query == "" {
+		return append([]collect.SystemdUnit(nil), m.dashboard.units.items...)
+	}
+	units := make([]collect.SystemdUnit, 0, len(m.dashboard.units.items))
+	for _, unit := range m.dashboard.units.items {
+		haystack := strings.ToLower(unit.Name + " " + unit.Description)
+		if strings.Contains(haystack, query) {
+			units = append(units, unit)
+		}
+	}
+	return units
+}
+
+func (m *Model) clampDashboardUnitCursor() {
+	units := m.filteredDashboardUnits()
+	if len(units) == 0 {
+		m.dashboard.unitUI.cursor = 0
+		return
+	}
+	m.dashboard.unitUI.cursor = max(0, min(m.dashboard.unitUI.cursor, len(units)-1))
+}
+
+func (m *Model) handleDashboardKey(key tea.KeyMsg) (tea.Cmd, bool) {
+	m.ensureDashboardUnitUI()
+	value := key.String()
+	if m.dashboard.unitUI.active {
+		switch value {
+		case "esc", "enter":
+			m.dashboard.unitUI.active = false
+			m.dashboard.unitUI.input.Blur()
+			m.clampDashboardUnitCursor()
+			return nil, true
+		default:
+			var cmd tea.Cmd
+			m.dashboard.unitUI.input, cmd = m.dashboard.unitUI.input.Update(key)
+			m.clampDashboardUnitCursor()
+			return cmd, true
+		}
+	}
+
+	switch value {
+	case "f":
+		m.dashboard.unitUI.active = true
+		m.dashboard.unitUI.input.Focus()
+		return textinput.Blink, true
+	case "j", "down":
+		m.dashboard.unitUI.cursor++
+		m.clampDashboardUnitCursor()
+		return nil, true
+	case "k", "up":
+		m.dashboard.unitUI.cursor--
+		m.clampDashboardUnitCursor()
+		return nil, true
+	case "enter":
+		units := m.filteredDashboardUnits()
+		if len(units) == 0 {
+			return nil, true
+		}
+		m.clampDashboardUnitCursor()
+		unit := units[m.dashboard.unitUI.cursor]
+		return m.startDashboardLog(collect.LogSource{Kind: collect.LogJournal, Name: unit.Name}), true
+	case "x":
+		m.dashboard.unitUI.input.Reset()
+		m.dashboard.unitUI.input.Blur()
+		m.dashboard.unitUI.active = false
+		m.dashboard.unitUI.cursor = 0
+		return m.startDashboardLog(collect.LogSource{Kind: collect.LogSystem}), true
+	default:
+		return nil, false
+	}
+}

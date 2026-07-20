@@ -40,6 +40,11 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
+	if m.screen == screenDashboard {
+		if cmd, handled := m.handleDashboardKey(key); handled {
+			return m, cmd
+		}
+	}
 
 	switch value {
 	case "c":
@@ -94,7 +99,7 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.screen == screenFleet && len(m.snapshot.Servers) > 0 {
 			m.screen = screenDashboard
-			m.request++
+			return m, m.startDashboardWorkspace()
 		}
 	case "p", "o", "h", "l", "d":
 		if m.screen == screenDashboard {
@@ -118,6 +123,7 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.screen = screenDashboard
 			m.request++
 		} else if m.screen == screenDashboard {
+			m.cancelDashboardWorkspace()
 			m.screen = screenFleet
 		}
 	case "q", "ctrl+c":

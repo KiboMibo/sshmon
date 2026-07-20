@@ -11,49 +11,7 @@ import (
 )
 
 func (m Model) renderDashboard() string {
-	if m.selected < 0 || m.selected >= len(m.snapshot.Servers) {
-		return titleStyle.Render("sshmon · Дашборд") + "\n\n" + dimStyle.Render("сервер не выбран · esc назад")
-	}
-	server := m.snapshot.Servers[m.selected]
-	width := max(40, m.layout.width)
-	contentWidth := max(20, width-2)
-	status := goodStyle.Render("● ДОСТУПЕН")
-	if !server.Online {
-		status = criticalStyle.Render("× НЕДОСТУПЕН")
-	}
-	if server.Time.IsZero() {
-		status = dimStyle.Render("◌ ОЖИДАНИЕ")
-	}
-
-	lines := []string{
-		titleStyle.Render("sshmon · " + server.Name),
-		fitLine(fmt.Sprintf("%s · %s · данные %s · uptime %s", status, server.Hostname, dashboardAge(m.snapshot.Time, server.Time), server.Uptime.Round(time.Minute)), contentWidth),
-	}
-	if server.Err != "" {
-		lines = append(lines, fitLine("ошибка SSH: "+server.Err, contentWidth))
-	}
-	if !server.Online && server.Err != "" {
-		lines = append(lines, criticalStyle.Render("сервер недоступен — нажмите r для переподключения"))
-	}
-	lines = append(lines,
-		"",
-		titleStyle.Render("CPU")+"  "+percentLine("", server.CPUPct, contentWidth-7),
-		fmt.Sprintf("LOAD     %.2f  %.2f  %.2f · %d ядер", server.Load1, server.Load5, server.Load15, server.NumCPU),
-		"",
-		titleStyle.Render("ПАМЯТЬ")+"  "+percentLine("", server.MemPct, contentWidth-10),
-		memoryText(server),
-		"SWAP     "+swapText(server),
-		"",
-		titleStyle.Render("СЕТЬ")+"    "+networkText(server),
-		titleStyle.Render("ДИСКИ / IO")+"  "+diskText(server),
-	)
-	if tables := deviceTables(server, m.layout); len(tables) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, tables...)
-	}
-	lines = append(lines, "", titleStyle.Render("ПРОБЛЕМЫ")+"  "+m.dashboardIssues(server.Name))
-	lines = append(lines, "", dimStyle.Render("r переподключить · p процессы · o порты · h история · l логи · d контейнеры · c чат · esc назад"))
-	return strings.Join(lines, "\n")
+	return m.renderDashboardWorkspace()
 }
 
 func dashboardAge(now, sampled time.Time) string {
