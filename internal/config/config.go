@@ -60,6 +60,10 @@ type History struct {
 
 func (h History) IsEnabled() bool { return h.Enabled == nil || *h.Enabled }
 
+type Dashboard struct {
+	SystemdUnits []string `yaml:"systemd_units,omitempty"`
+}
+
 type Config struct {
 	Interval   time.Duration `yaml:"-"`
 	IntervalS  string        `yaml:"interval"`
@@ -67,6 +71,7 @@ type Config struct {
 	LLM        LLM           `yaml:"llm"`
 	Thresholds Thresholds    `yaml:"thresholds"`
 	History    History       `yaml:"history"`
+	Dashboard  Dashboard     `yaml:"dashboard,omitempty"`
 }
 
 func DefaultPath() string {

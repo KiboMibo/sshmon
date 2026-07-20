@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -63,16 +64,71 @@ func (c *Collector) logCommand(ctx context.Context, request LogRequest) (string,
 		}
 		return "journalctl -f -n 200 --no-pager -u " + request.Source.Name, nil
 	case LogContainer:
-		containers, err := c.Containers(ctx, request.Server)
+		id, err := c.containerID(ctx, request.Server, request.Source.Name)
 		if err != nil {
 			return "", err
 		}
-		for _, container := range containers {
-			if (container.ID == request.Source.Name || container.Name == request.Source.Name) && safeLogName.MatchString(container.ID) {
-				return "docker logs -f --tail 200 " + container.ID, nil
-			}
+		return "docker logs -f --tail 200 " + id, nil
+	default:
+		return "", ErrUnsupported
+	}
+}
+
+func (c *Collector) containerID(ctx context.Context, server, name string) (string, error) {
+	containers, err := c.Containers(ctx, server)
+	if err != nil {
+		return "", err
+	}
+	for _, container := range containers {
+		if (container.ID == name || container.Name == name) && safeLogName.MatchString(container.ID) {
+			return container.ID, nil
 		}
-		return "", fmt.Errorf("неизвестный контейнер %q", request.Source.Name)
+	}
+	return "", fmt.Errorf("неизвестный контейнер %q", name)
+}
+
+// snapshotLineCap — жёсткий предел статичного хвоста лога для дашборда.
+const snapshotLineCap = 50
+
+func (c *Collector) LogSnapshot(ctx context.Context, request LogRequest, lines int) ([]string, error) {
+	client, err := c.clientFor(request.Server)
+	if err != nil {
+		return nil, err
+	}
+	command, err := c.logSnapshotCommand(ctx, request, lines)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := client.RunContext(ctx, command)
+	if err != nil {
+		return nil, err
+	}
+	trimmed := strings.TrimRight(raw, "\n")
+	if trimmed == "" {
+		return nil, nil
+	}
+	return strings.Split(trimmed, "\n"), nil
+}
+
+func (c *Collector) logSnapshotCommand(ctx context.Context, request LogRequest, lines int) (string, error) {
+	if lines <= 0 || lines > snapshotLineCap {
+		lines = snapshotLineCap
+	}
+	n := strconv.Itoa(lines)
+	switch request.Source.Kind {
+	case LogSystem:
+		return "journalctl -n " + n + " --no-pager 2>/dev/null || tail -n " + n + " /var/log/syslog 2>/dev/null || tail -n " + n + " /var/log/messages 2>/dev/null || logread", nil
+	case LogJournal:
+		if !safeLogName.MatchString(request.Source.Name) {
+			return "", errors.New("недопустимое имя journal unit")
+		}
+		return "journalctl -n " + n + " --no-pager -u " + request.Source.Name, nil
+	case LogContainer:
+		id, err := c.containerID(ctx, request.Server, request.Source.Name)
+		if err != nil {
+			return "", err
+		}
+		return "docker logs --tail " + n + " " + id, nil
 	default:
 		return "", ErrUnsupported
 	}

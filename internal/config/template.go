@@ -44,6 +44,11 @@ history:
   path: ~/.local/share/sshmon/history.db
   raw_retention: 24h
   aggregate_retention: 720h
+
+# dashboard:
+#   systemd_units:              # точные имена юнитов; пусто — показать запущенные сервисы
+#     - nginx.service
+#     - docker.service
 `
 
 // Template — шаблон конфига без серверов (для headless / пустого ssh-конфига).

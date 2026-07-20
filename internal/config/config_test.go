@@ -136,6 +136,77 @@ func TestLoadPreservesExplicitlyDisabledHistory(t *testing.T) {
 	}
 }
 
+func TestLoadParsesDashboardSystemdUnits(t *testing.T) {
+	// Given: конфиг с явным списком systemd-юнитов для дашборда.
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := "servers:\n  - host: 10.0.0.1\ndashboard:\n  systemd_units:\n    - nginx.service\n    - docker.service\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: конфиг загружается.
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Then: точные имена юнитов доступны в порядке объявления.
+	got := cfg.Dashboard.SystemdUnits
+	if len(got) != 2 || got[0] != "nginx.service" || got[1] != "docker.service" {
+		t.Fatalf("Dashboard.SystemdUnits=%v", got)
+	}
+}
+
+func TestLoadDefaultsDashboardSystemdUnitsToEmpty(t *testing.T) {
+	// Given: минимальный конфиг без блока dashboard.
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("servers:\n  - host: 10.0.0.1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: конфиг загружается.
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Then: список юнитов пуст — дашборд сам покажет запущенные сервисы.
+	if len(cfg.Dashboard.SystemdUnits) != 0 {
+		t.Fatalf("Dashboard.SystemdUnits=%v, want empty", cfg.Dashboard.SystemdUnits)
+	}
+}
+
+func TestPopulateServersPreservesDashboardUnits(t *testing.T) {
+	// Given: пустой по серверам конфиг с настроенным блоком dashboard.
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := "servers:\ndashboard:\n  systemd_units:\n    - postgresql.service\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: интерактивная настройка добавляет сервер.
+	if err := PopulateServers(path, []Server{{Name: "db", Host: "10.0.0.2", User: "root"}}); err != nil {
+		t.Fatalf("PopulateServers: %v", err)
+	}
+
+	// Then: блок dashboard пережил перезапись файла.
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Dashboard.SystemdUnits; len(got) != 1 || got[0] != "postgresql.service" {
+		t.Fatalf("Dashboard.SystemdUnits=%v", got)
+	}
+}
+
+func TestTemplateDocumentsDashboardUnits(t *testing.T) {
+	// Given/When: шаблон конфига по умолчанию.
+	// Then: он документирует закомментированный пример dashboard.systemd_units.
+	if !strings.Contains(Template, "dashboard") || !strings.Contains(Template, "systemd_units") {
+		t.Fatalf("шаблон не документирует dashboard.systemd_units:\n%s", Template)
+	}
+}
+
 func TestWriteWithServersOmitsZeroPortAndLoadDefaultsToSSH(t *testing.T) {
 	// Given: an imported SSH host without an explicit Port.
 	path := filepath.Join(t.TempDir(), "config.yaml")
