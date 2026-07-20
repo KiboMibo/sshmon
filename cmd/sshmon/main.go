@@ -25,7 +25,7 @@ import (
 	"github.com/kibomibo/sshmon/internal/tui"
 )
 
-var version = "0.2.0"
+var version = "0.2.1"
 
 func writeVersion(w io.Writer, v string) {
 	fmt.Fprintf(w, "sshmon %s\n", v)
