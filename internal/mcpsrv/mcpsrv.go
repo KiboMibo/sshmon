@@ -79,7 +79,7 @@ func handle(col *collect.Collector, req *request) response {
 		resp.Result = map[string]any{
 			"protocolVersion": p.ProtocolVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "sshmon", "version": "0.2.1"},
+			"serverInfo":      map[string]any{"name": "sshmon", "version": "0.3.0"},
 		}
 	case "ping":
 		resp.Result = map[string]any{}
