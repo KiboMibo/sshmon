@@ -9,7 +9,7 @@ BusyBox-роутерах (OpenWrt/Keenetic: `logread` вместо journalctl).
 ## Возможности
 
 - **Fleet** — список серверов с фильтрами по группе и проблемам, краткими трендами и адаптивным превью.
-- **Dashboard** — CPU, RAM, load, диски, IO, сеть и найденные проблемы выбранного сервера.
+- **Dashboard** — три ряда с CPU, RAM, дисками и IO, Docker, сетью, systemd-юнитами и статичным хвостом последних 50 строк логов.
 - **Processes / Ports / Docker** — диагностические read-only экраны; sshmon не отправляет сигналы процессам и не изменяет контейнеры.
 - **History** — локальные графики с offline-разрывами, сырыми точками и минутными агрегатами.
 - **Logs** — живой journalctl / tail syslog / logread с паузой, фильтром, переподключением и буфером до 10 000 строк.
@@ -51,6 +51,11 @@ history:
   path: ~/.local/share/sshmon/history.db
   raw_retention: 24h
   aggregate_retention: 720h
+
+dashboard:
+  systemd_units:             # точные имена; пустой список показывает запущенные сервисы
+    - nginx.service
+    - docker.service
 ```
 
 Аутентификация: ключ (`key`), ssh-agent или пароль (`password`).
@@ -76,8 +81,11 @@ sshmon --import         # выбрать и добавить новые хост
 
 - Fleet: `j/k` или стрелки — выбор, `enter` — Dashboard, `g` — группа,
   `!` — только проблемные, `v` — превью, `pgup/pgdown` — страница.
-- Dashboard: `p` — Processes, `o` — Ports, `h` — History, `l` — Logs,
-  `d` — Docker.
+- Dashboard: `f` — фильтр systemd-юнитов, `j/k` — выбор юнита, `enter` —
+  показать его journal, `x` — вернуться к системному логу, `r` — переподключить
+  сервер; `p` — Processes, `o` — Ports, `h` — History, `l` — живые Logs,
+  `d` — Docker. Нижняя панель показывает статичный снимок последних 50 строк и
+  не обновляется автоматически.
 - History: `1-5` — диапазон, `j/k` — метрика, `h/l` — курсор,
   `r` — обновить.
 - Logs: `space` — пауза, `/` — фильтр, `s` — источник, `r` — переподключить,
