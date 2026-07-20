@@ -2,6 +2,7 @@
 package sshx
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -153,9 +154,24 @@ func authMethods(cfg config.Server, passphrase []byte) ([]ssh.AuthMethod, bool, 
 	// Сначала agent, чтобы уже загруженные в ssh-add ключи работали без passphrase-промпта.
 	var out []ssh.AuthMethod
 	agentReachable := false
+	expected := publicKeyFromKeyFile(cfg.Key, passphrase)
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
 		if conn, err := net.Dial("unix", sock); err == nil {
-			out = append(out, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
+			defer conn.Close() // fd-leak fix: agent conn не закрывался ранее.
+			if expected == nil {
+				// Не можем вывести публичный ключ cfg.Key — предлагаем все ключи агента
+				// (старое поведение). Callback вычисляет signers лениво, при аутентификации.
+				out = append(out, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
+			} else {
+				// Эмуляция openssh IdentitiesOnly yes: агент всё ещё источник,
+				// но предлагаем только ключ, совпадающий с cfg.Key, чтобы уложиться
+				// в sshd MaxAuthTries при большом количестве загруженных ключей.
+				signers, _ := agent.NewClient(conn).Signers()
+				filtered := filterAgentSigners(signers, expected)
+				if len(filtered) > 0 {
+					out = append(out, ssh.PublicKeys(filtered...))
+				}
+			}
 			agentReachable = true
 		}
 	}
@@ -189,6 +205,55 @@ func authMethods(cfg config.Server, passphrase []byte) ([]ssh.AuthMethod, bool, 
 		out = append(out, ssh.Password(cfg.Password))
 	}
 	return out, needsPassphrase, nil
+}
+
+// filterAgentSigners ограничивает список signer'ов агента теми, чей публичный ключ
+// совпадает с ожидаемым. Это эмуляция openssh IdentitiesOnly yes: при большом числе
+// ключей в ssh-agent мы не превысим sshd MaxAuthTries (по умолчанию 6).
+//
+// nil expected → возвращаются все signers без фильтрации (legacy-поведение).
+// Пустой результат после фильтрации → возвращаются все signers (fallback,
+// чтобы не молча отключить аутентификацию, если cfg.Key не загружен в агент).
+func filterAgentSigners(signers []ssh.Signer, expected ssh.PublicKey) []ssh.Signer {
+	if expected == nil {
+		return signers
+	}
+	want := expected.Marshal()
+	var out []ssh.Signer
+	for _, s := range signers {
+		if bytes.Equal(s.PublicKey().Marshal(), want) {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return signers
+	}
+	return out
+}
+
+// publicKeyFromKeyFile выводит публичный ключ для приватного файла cfg.Key.
+// Пробуем .pub sidecar (работает для зашифрованных ключей), затем сам приватный
+// файл (только незашифрованный), затем с passphrase. nil если ничего не сработало.
+func publicKeyFromKeyFile(keyPath string, passphrase []byte) ssh.PublicKey {
+	if keyPath == "" {
+		return nil
+	}
+	if b, err := os.ReadFile(keyPath + ".pub"); err == nil {
+		if pub, _, _, _, err := ssh.ParseAuthorizedKey(b); err == nil {
+			return pub
+		}
+	}
+	if b, err := os.ReadFile(keyPath); err == nil {
+		if signer, err := ssh.ParsePrivateKey(b); err == nil {
+			return signer.PublicKey()
+		}
+		if len(passphrase) > 0 {
+			if signer, err := ssh.ParsePrivateKeyWithPassphrase(b, passphrase); err == nil {
+				return signer.PublicKey()
+			}
+		}
+	}
+	return nil
 }
 
 // FriendlyErr переводит сырые ошибки ssh.Dial/Run в человекочитаемые подсказки.
