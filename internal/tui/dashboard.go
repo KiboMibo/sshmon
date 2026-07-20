@@ -51,15 +51,12 @@ func networkText(server collect.Metrics) string {
 }
 
 func diskText(server collect.Metrics) string {
-	var used, read, write float64
-	for _, disk := range server.Disks {
-		used = max(used, disk.UsedPct)
-	}
+	var read, write float64
 	for _, device := range server.IO {
 		read += device.ReadBps
 		write += device.WriteBps
 	}
-	return fmt.Sprintf("max %.0f%% · R %s/s · W %s/s", used, byteValue(read), byteValue(write))
+	return fmt.Sprintf("R %s/s · W %s/s", byteValue(read), byteValue(write))
 }
 
 func (m Model) dashboardIssues(name string) string {

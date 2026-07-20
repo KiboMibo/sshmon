@@ -24,6 +24,11 @@ func (m Model) renderDashboardWorkspace() string {
 		lines = append(lines, criticalStyle.Render("сервер недоступен — нажмите r для переподключения"))
 	}
 	if m.layout.wide {
+		lines = append(lines, panelBox("ПРОБЛЕМЫ", "r переподключить", m.layout.width, []string{m.dashboardIssues(server.Name)})...)
+	} else {
+		lines = append(lines, dimStyle.Render("ПРОБЛЕМЫ: "+m.dashboardIssues(server.Name)))
+	}
+	if m.layout.wide {
 		pw := m.dashboardPanelWidth()
 		lines = append(lines,
 			joinBoxes(
@@ -64,16 +69,7 @@ func (m Model) dashboardStatus(server collect.Metrics) string {
 
 func (m Model) dashboardMetricsPanel(server collect.Metrics) []string {
 	width := max(20, m.dashboardPanelWidth())
-	rows := []string{
-		titleStyle.Render("CPU") + "  " + percentLine("", server.CPUPct, width-7),
-		fmt.Sprintf("LOAD     %.2f  %.2f  %.2f · %d ядер", server.Load1, server.Load5, server.Load15, server.NumCPU),
-		titleStyle.Render("ПАМЯТЬ") + "  " + percentLine("", server.MemPct, width-10),
-		memoryText(server),
-		"SWAP     " + swapText(server),
-		titleStyle.Render("ДИСКИ / IO") + "  " + diskText(server),
-	}
-	rows = append(rows, diskTable(server)...)
-	return append(rows, titleStyle.Render("ПРОБЛЕМЫ")+"  "+m.dashboardIssues(server.Name))
+	return dashboardMetricsContent(server, width, !m.layout.wide)
 }
 
 func (m Model) dashboardDockerPanel() []string {

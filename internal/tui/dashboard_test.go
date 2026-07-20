@@ -35,7 +35,7 @@ func TestDashboardFitsMandatorySectionsAtMinimumSize(t *testing.T) {
 	view := updated.(Model).View()
 
 	// Then: every mandatory panel and every deep-screen hint fits in the viewport.
-	for _, want := range []string{"CPU", "LOAD", "ПАМЯТЬ", "SWAP", "СЕТЬ", "ДИСКИ / IO", "ПРОБЛЕМЫ", "p процессы", "o порты", "h история", "l логи", "d контейнеры"} {
+	for _, want := range []string{"CPU", "ПАМЯТЬ", "SWAP", "СЕТЬ", "ДИСКИ / IO", "ПРОБЛЕМЫ", "p процессы", "o порты", "h история", "l логи", "d контейнеры"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("dashboard missing %q:\n%s", want, view)
 		}
@@ -73,8 +73,8 @@ func TestDashboardShowsInterfaceAndDiskTables(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	view := updated.(Model).View()
 
-	// Then: interface and disk tables show headers and every row.
-	for _, want := range []string{"ИНТЕРФЕЙС", "RX/S", "TX/S", "ТОЧКА", "ЗАНЯТО", "СВОБОДНО", "ens32", "ens33", "/boot"} {
+	// Then: network table headers/rows + disk mount bars with GB labels.
+	for _, want := range []string{"ИНТЕРФЕЙС", "RX/S", "TX/S", "ens32", "ens33", "/boot", "ГБ"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("dashboard tables missing %q:\n%s", want, view)
 		}
