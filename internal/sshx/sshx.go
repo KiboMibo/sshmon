@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -180,6 +181,26 @@ func authMethods(cfg config.Server, passphrase []byte) ([]ssh.AuthMethod, bool, 
 		out = append(out, ssh.Password(cfg.Password))
 	}
 	return out, needsPassphrase, nil
+}
+
+// FriendlyErr переводит сырые ошибки ssh.Dial/Run в человекочитаемые подсказки.
+// Не известные ошибки возвращаются как есть (err.Error()).
+func FriendlyErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "knownhosts: key mismatch"):
+		return "host-key сервера не совпадает с записью в ~/.ssh/known_hosts — выполните `ssh-keygen -R <host>` и переподключитесь обычным ssh, либо поставьте insecure_host_key: true в config.yaml"
+	case strings.Contains(msg, "unable to authenticate"):
+		return "не удалось аутентифицироваться — проверьте ключ/пароль и что ssh-agent загружен (ssh-add -l)"
+	case strings.Contains(msg, "connection refused"):
+		return "сеть: подключение отклонено — проверьте что sshd запущен и порт указан верно"
+	case strings.Contains(msg, "i/o timeout") || strings.Contains(msg, "deadline exceeded"):
+		return "сеть: таймаут подключения — хост недоступен или порт закрыт firewall"
+	}
+	return msg
 }
 
 func hostKeyCallback(cfg config.Server) ssh.HostKeyCallback {

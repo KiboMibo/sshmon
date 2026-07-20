@@ -100,7 +100,7 @@ func (c *Collector) poll(st *serverState) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err != nil {
-		st.m = Metrics{Name: st.cfg.Name, Group: st.cfg.Group, Time: now, Online: false, Err: err.Error()}
+		st.m = Metrics{Name: st.cfg.Name, Group: st.cfg.Group, Time: now, Online: false, Err: sshx.FriendlyErr(err)}
 		st.prev = nil
 		return err
 	}
