@@ -150,8 +150,9 @@ func dashboardWorkspaceFixture() Model {
 			Net:   []collect.NetRate{{Iface: "eth0", RxBps: 4096, TxBps: 2048}},
 		}}},
 		dashboard: dashboardWorkspace{
-			units: dashboardUnitsState{items: []collect.SystemdUnit{{Name: "sshd.service", Active: "active", Sub: "running"}}, status: diagnosticsReady},
-			logs:  dashboardLogState{lines: []string{"system ready"}, source: collect.LogSource{Kind: collect.LogSystem}, status: diagnosticsReady},
+			tileFocus: tileSystemd,
+			units:     dashboardUnitsState{items: []collect.SystemdUnit{{Name: "sshd.service", Active: "active", Sub: "running"}}, status: diagnosticsReady},
+			logs:      dashboardLogState{lines: []string{"system ready"}, source: collect.LogSource{Kind: collect.LogSystem}, status: diagnosticsReady},
 		},
 	}
 }

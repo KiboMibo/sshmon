@@ -34,15 +34,15 @@ func (m Model) renderDashboardWorkspace() string {
 		netC, dockerC := equalizeBoxes(dashboardNetworkContent(server), m.dashboardDockerContent())
 		lines = append(lines,
 			joinBoxes(
-				panelBox("МЕТРИКИ", "p процессы · o порты · h история", pw, metricsC),
-				panelBox("SYSTEMD", "f фильтр · j/k · enter journal", pw, systemdC),
+				panelBox(m.dashboardTileTitle(tileMetrics, "МЕТРИКИ"), "p процессы · o порты · h история", pw, metricsC),
+				panelBox(m.dashboardTileTitle(tileSystemd, "SYSTEMD"), "f фильтр · j/k · enter journal", pw, systemdC),
 			),
 			joinBoxes(
-				panelBox("СЕТЬ", "o порты", pw, netC),
-				panelBox("DOCKER", "d контейнеры", pw, dockerC),
+				panelBox(m.dashboardTileTitle(tileNetwork, "СЕТЬ"), "o порты", pw, netC),
+				panelBox(m.dashboardTileTitle(tileDocker, "DOCKER"), "d контейнеры", pw, dockerC),
 			),
 		)
-		lines = append(lines, panelBox(m.dashboardLogsTitle(), "l логи · x системный лог", m.layout.width, m.dashboardLogsContent())...)
+		lines = append(lines, panelBox(m.dashboardTileTitle(tileLogs, m.dashboardLogsTitle()), "l логи · x системный лог", m.layout.width, m.dashboardLogsContent())...)
 	} else {
 		lines = append(lines,
 			dimStyle.Render("p процессы · o порты · h история"),

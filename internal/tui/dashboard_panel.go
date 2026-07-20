@@ -176,12 +176,22 @@ func (m Model) dashboardLogsContent() []string {
 		}
 		return []string{dimStyle.Render("нет строк")}
 	}
-	start := max(0, len(m.dashboard.logs.lines)-5)
-	rows := make([]string, 0, len(m.dashboard.logs.lines)-start)
-	for _, line := range m.dashboard.logs.lines[start:] {
+	window := m.dashboardLogWindow()
+	scroll := min(max(0, m.dashboard.tileScrolls[tileLogs]), max(0, len(m.dashboard.logs.lines)-1))
+	end := max(1, len(m.dashboard.logs.lines)-scroll)
+	start := max(0, end-window)
+	rows := make([]string, 0, end-start)
+	for _, line := range m.dashboard.logs.lines[start:end] {
 		rows = append(rows, fitLine(line, m.layout.width-4))
 	}
 	return rows
+}
+
+func (m Model) dashboardLogWindow() int {
+	if !m.layout.wide {
+		return 5
+	}
+	return max(7, (m.layout.height-1)/3)
 }
 
 func (m Model) dashboardLogsTitle() string {

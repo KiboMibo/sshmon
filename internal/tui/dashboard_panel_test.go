@@ -217,16 +217,19 @@ func TestDashboardWideLayoutSwapsRowsAndEqualizesHeight(t *testing.T) {
 	metricsLine, systemdLine := -1, -1
 	setLine, dockerLine := -1, -1
 	for i, line := range strings.Split(view, "\n") {
-		if strings.Contains(line, "╭─ МЕТРИКИ") {
+		if !strings.Contains(line, "╭─") {
+			continue
+		}
+		if strings.Contains(line, "МЕТРИКИ") {
 			metricsLine = i
 		}
-		if strings.Contains(line, "╭─ SYSTEMD") {
+		if strings.Contains(line, "SYSTEMD") {
 			systemdLine = i
 		}
-		if strings.Contains(line, "╭─ СЕТЬ") {
+		if strings.Contains(line, "СЕТЬ") {
 			setLine = i
 		}
-		if strings.Contains(line, "╭─ DOCKER") {
+		if strings.Contains(line, "DOCKER") {
 			dockerLine = i
 		}
 	}

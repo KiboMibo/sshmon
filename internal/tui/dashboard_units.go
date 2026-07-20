@@ -71,34 +71,5 @@ func (m *Model) handleDashboardKey(key tea.KeyMsg) (tea.Cmd, bool) {
 		}
 	}
 
-	switch value {
-	case "f":
-		m.dashboard.unitUI.active = true
-		m.dashboard.unitUI.input.Focus()
-		return textinput.Blink, true
-	case "j", "down":
-		m.dashboard.unitUI.cursor++
-		m.clampDashboardUnitCursor()
-		return nil, true
-	case "k", "up":
-		m.dashboard.unitUI.cursor--
-		m.clampDashboardUnitCursor()
-		return nil, true
-	case "enter":
-		units := m.filteredDashboardUnits()
-		if len(units) == 0 {
-			return nil, true
-		}
-		m.clampDashboardUnitCursor()
-		unit := units[m.dashboard.unitUI.cursor]
-		return m.startDashboardLog(collect.LogSource{Kind: collect.LogJournal, Name: unit.Name}), true
-	case "x":
-		m.dashboard.unitUI.input.Reset()
-		m.dashboard.unitUI.input.Blur()
-		m.dashboard.unitUI.active = false
-		m.dashboard.unitUI.cursor = 0
-		return m.startDashboardLog(collect.LogSource{Kind: collect.LogSystem}), true
-	default:
-		return nil, false
-	}
+	return m.handleDashboardFocusKey(value)
 }

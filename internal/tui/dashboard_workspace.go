@@ -44,10 +44,12 @@ type dashboardLogState struct {
 }
 
 type dashboardWorkspace struct {
-	containers dashboardContainersState
-	units      dashboardUnitsState
-	logs       dashboardLogState
-	unitUI     dashboardUnitUI
+	containers  dashboardContainersState
+	units       dashboardUnitsState
+	logs        dashboardLogState
+	unitUI      dashboardUnitUI
+	tileFocus   uint8
+	tileScrolls [numDashboardTiles]int
 }
 
 type dashboardContainersResultMsg struct {
@@ -71,6 +73,8 @@ type dashboardLogResultMsg struct {
 
 func (m *Model) startDashboardWorkspace() tea.Cmd {
 	m.cancelDashboardWorkspace()
+	m.dashboard.tileFocus = tileSystemd
+	m.dashboard.tileScrolls = [numDashboardTiles]int{}
 	server := m.selectedName()
 	configured := []string(nil)
 	if m.config != nil {
