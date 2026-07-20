@@ -5,8 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
-
 	"github.com/kibomibo/sshmon/internal/collect"
 )
 
@@ -25,27 +23,30 @@ func (m Model) renderDashboardWorkspace() string {
 	if !server.Online && server.Err != "" {
 		lines = append(lines, criticalStyle.Render("сервер недоступен — нажмите r для переподключения"))
 	}
-	lines = append(lines,
-		dimStyle.Render("p процессы · o порты · h история"),
-		dimStyle.Render("l логи · d контейнеры · f фильтр · x системный лог"),
-	)
-
-	metrics := m.dashboardMetricsPanel(server)
-	docker := m.dashboardDockerPanel()
-	network := dashboardNetworkPanel(server)
-	units := m.dashboardUnitsPanel()
 	if m.layout.wide {
+		pw := m.dashboardPanelWidth()
 		lines = append(lines,
-			joinDashboardPanels(metrics, docker, m.layout.width),
-			joinDashboardPanels(network, units, m.layout.width),
+			joinBoxes(
+				panelBox("МЕТРИКИ", "p процессы · o порты · h история", pw, m.dashboardMetricsPanel(server)),
+				panelBox("DOCKER", "d контейнеры", pw, m.dashboardDockerContent()),
+			),
+			joinBoxes(
+				panelBox("СЕТЬ", "o порты", pw, dashboardNetworkContent(server)),
+				panelBox("SYSTEMD", "f фильтр · j/k · enter journal", pw, m.dashboardUnitsContent()),
+			),
 		)
+		lines = append(lines, panelBox(m.dashboardLogsTitle(), "l логи · x системный лог", m.layout.width, m.dashboardLogsContent())...)
 	} else {
-		lines = append(lines, metrics...)
-		lines = append(lines, docker...)
-		lines = append(lines, network...)
-		lines = append(lines, units...)
+		lines = append(lines,
+			dimStyle.Render("p процессы · o порты · h история"),
+			dimStyle.Render("l логи · d контейнеры · f фильтр · x системный лог"),
+		)
+		lines = append(lines, m.dashboardMetricsPanel(server)...)
+		lines = append(lines, m.dashboardDockerPanel()...)
+		lines = append(lines, dashboardNetworkPanel(server)...)
+		lines = append(lines, m.dashboardUnitsPanel()...)
+		lines = append(lines, m.dashboardLogsPanel()...)
 	}
-	lines = append(lines, m.dashboardLogsPanel()...)
 	lines = append(lines, dimStyle.Render("j/k юнит · enter journal · r переподключить · c чат · esc назад"))
 	return strings.Join(lines, "\n")
 }
@@ -147,11 +148,4 @@ func (m Model) dashboardPanelWidth() int {
 		return m.layout.width
 	}
 	return max(32, (m.layout.width-2)/2)
-}
-
-func joinDashboardPanels(left, right []string, width int) string {
-	panelWidth := max(32, (width-2)/2)
-	leftPanel := lipgloss.NewStyle().Width(panelWidth).Render(strings.Join(left, "\n"))
-	rightPanel := lipgloss.NewStyle().Width(panelWidth).Render(strings.Join(right, "\n"))
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, "  ", rightPanel)
 }

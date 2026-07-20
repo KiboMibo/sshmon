@@ -6,8 +6,34 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/kibomibo/sshmon/internal/collect"
 )
+
+func TestDashboardWidePanelsNeverOverflowTerminalWidth(t *testing.T) {
+	// Given a wide dashboard with loaded Docker, systemd, and log data at several terminal sizes.
+	for _, size := range []struct{ w, h int }{{120, 30}, {160, 40}} {
+		m := dashboardWorkspaceFixture()
+		m.dashboard.containers.items = []collect.Container{{Name: "api", Status: "Up", CPUPct: 3, MemPct: 4}}
+		m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: size.w, Height: size.h})
+
+		// When the bordered dashboard is rendered.
+		view := m.View()
+
+		// Then every visual line fits the terminal width and panel borders are drawn.
+		for i, line := range strings.Split(view, "\n") {
+			if width := lipgloss.Width(line); width > size.w {
+				t.Fatalf("%dx%d line %d width = %d > %d: %q", size.w, size.h, i, width, size.w, line)
+			}
+		}
+		for _, glyph := range []string{"╭", "╮", "╰", "╯"} {
+			if !strings.Contains(view, glyph) {
+				t.Fatalf("%dx%d view misses panel border glyph %q:\n%s", size.w, size.h, glyph, view)
+			}
+		}
+	}
+}
 
 func TestDashboardThreeRowWideLayoutShowsWorkspacePanels(t *testing.T) {
 	// Given a wide dashboard with metrics and loaded Docker, systemd, and log data.
