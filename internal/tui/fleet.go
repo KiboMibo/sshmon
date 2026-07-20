@@ -72,8 +72,25 @@ func abs(value int) int {
 	return value
 }
 
-func fleetTableWidth(total int) int {
-	return max(42, total*65/100)
+func fleetRowStyle(selected bool) lipgloss.Style {
+	if selected {
+		return focusStyle
+	}
+	return dimStyle
+}
+
+func fleetScroll(selectedRow, height, total int) int {
+	if total <= height {
+		return 0
+	}
+	scroll := selectedRow - height/2
+	if scroll < 0 {
+		scroll = 0
+	}
+	if scroll > total-height {
+		scroll = total - height
+	}
+	return scroll
 }
 
 func groupedServers(snapshot collect.Snapshot, servers []config.Server, filter fleetFilter) []int {
@@ -103,28 +120,52 @@ func (m Model) configServers() []config.Server {
 
 func (m Model) renderFleet() string {
 	m.ensureFleet()
+	footer := dimStyle.Render("enter открыть · / поиск · g группа · ! проблемы · v вид · c чат · : команды · ? помощь · q выход")
+	if m.layout.wide {
+		return m.renderFleetWide() + "\n" + footer
+	}
+	listLines, _ := m.fleetListLines()
+	body := titleStyle.Render("sshmon · Серверы") + "\n" + strings.Join(listLines, "\n")
+	return body + "\n" + footer
+}
+
+func (m Model) renderFleetWide() string {
+	listLines, selectedRow := m.fleetListLines()
+	contentH := max(1, m.layout.height-3)
+	scroll := fleetScroll(selectedRow, contentH, len(listLines))
+	if !m.fleet.preview {
+		full := panelBoxStyled("СЕРВЕРЫ", "v детали · / поиск · g группа · ! проблемы", m.layout.width,
+			fitPanelHeight(listLines, contentH, scroll), dimStyle)
+		return strings.Join(full, "\n")
+	}
+	rightW := max(30, m.layout.width/4)
+	leftW := m.layout.width - rightW - 2
+	left := panelBoxStyled("СЕРВЕРЫ", "enter открыть · v свернуть · / поиск", leftW,
+		fitPanelHeight(listLines, contentH, scroll), dimStyle)
+	right := panelBoxStyled(m.fleetDetailTitle(), "! проблемы · g группа", rightW,
+		fitPanelHeight(m.fleetDetailContent(rightW-4), contentH, 0), dimStyle)
+	return joinBoxes(left, right)
+}
+
+func (m Model) fleetListLines() ([]string, int) {
 	visible := groupedServers(m.snapshot, m.configServers(), m.fleet.filter)
-	var rows strings.Builder
-	rows.WriteString(titleStyle.Render("sshmon · Серверы") + "\n")
-	rows.WriteString(dimStyle.Render("  СОСТ  ИМЯ             CPU   MEM   LOAD   UPTIME") + "\n")
+	lines := []string{dimStyle.Render("  СОСТ  ИМЯ             CPU   MEM   LOAD   UPTIME")}
+	selectedRow := 0
 	previousGroup := ""
 	for _, index := range visible {
 		if group := m.snapshot.Servers[index].Group; group != "" && group != previousGroup {
-			rows.WriteString(titleStyle.Render(group) + "\n")
+			lines = append(lines, titleStyle.Render(group))
 			previousGroup = group
 		}
-		rows.WriteString(m.renderFleetRow(index) + "\n")
+		if index == m.selected {
+			selectedRow = len(lines)
+		}
+		lines = append(lines, m.renderFleetRow(index))
 	}
 	if len(visible) == 0 {
-		rows.WriteString(dimStyle.Render("  серверы не найдены") + "\n")
+		lines = append(lines, dimStyle.Render("  серверы не найдены"))
 	}
-	body := rows.String()
-	if m.layout.wide && m.fleet.preview {
-		body = lipgloss.JoinHorizontal(lipgloss.Top,
-			lipgloss.NewStyle().Width(fleetTableWidth(m.layout.width)).Render(strings.TrimSuffix(body, "\n")),
-			"  ", m.renderFleetPreview())
-	}
-	return body + "\n" + dimStyle.Render("enter открыть · / поиск · g группа · ! проблемы · v вид · c чат · : команды · ? помощь · q выход")
+	return lines, selectedRow
 }
 
 func (m Model) renderFleetRow(index int) string {
@@ -133,21 +174,10 @@ func (m Model) renderFleetRow(index int) string {
 	if index == m.selected {
 		cursor = "▶ "
 	}
-	return fmt.Sprintf("%s%s  %-15s %4.0f%% %4.0f%% %6.2f %8s",
+	row := fmt.Sprintf("%s%s  %-15s %4.0f%% %4.0f%% %6.2f %8s",
 		cursor, statusGlyph(server), truncateCells(server.Name, 15),
 		server.CPUPct, server.MemPct, server.Load1, formatUptime(server.Uptime))
-}
-
-func (m Model) renderFleetPreview() string {
-	if m.selected < 0 || m.selected >= len(m.snapshot.Servers) {
-		return dimStyle.Render("сервер не выбран")
-	}
-	server := m.snapshot.Servers[m.selected]
-	issues := issuesForServer(m.snapshot.Issues, server.Name)
-	return titleStyle.Render(server.Name) + "\n" +
-		fmt.Sprintf("%s  %s\nCPU  %3.0f%%  %s\nMEM  %3.0f%%  %s\nload %.2f · uptime %s\nпроблемы: %d",
-			server.Hostname, statusText(server), server.CPUPct, sparkline([]float64{server.CPUPct}, 12),
-			server.MemPct, sparkline([]float64{server.MemPct}, 12), server.Load1, server.Uptime.Round(time.Minute), len(issues))
+	return fleetRowStyle(index == m.selected).Render(row)
 }
 
 func statusGlyph(server collect.Metrics) string {

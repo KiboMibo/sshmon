@@ -127,7 +127,7 @@ func helpText(screen screenKind) string {
 	case screenFleet:
 		return "j/k выбор · enter открыть · / поиск · g группа · ! проблемы · v превью · " + common
 	case screenDashboard:
-		return "f фильтр юнитов · j/k выбор · enter journal · x системный лог · r переподключить · p процессы · o порты · h история · l логи · d Docker · " + common
+		return "f фильтр юнитов · j/k выбор · enter journal · x системный лог · r переподключить · p процессы · o порты · ctrl+h история · ctrl+l логи · d Docker · " + common
 	case screenHistory:
 		return "1-5 диапазон · j/k метрика · h/l курсор · r обновить · " + common
 	case screenLogs:

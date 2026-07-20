@@ -23,26 +23,35 @@ func TestNavigationDrillsIntoServerAndReturnsToFleet(t *testing.T) {
 
 func TestDashboardShortcutsOpenOnlyDeepScreens(t *testing.T) {
 	tests := []struct {
-		key  string
+		msg  tea.KeyMsg
 		want screenKind
 	}{
-		{"p", screenProcesses},
-		{"o", screenPorts},
-		{"h", screenHistory},
-		{"l", screenLogs},
-		{"d", screenContainers},
+		{key("p"), screenProcesses},
+		{key("o"), screenPorts},
+		{tea.KeyMsg{Type: tea.KeyCtrlH}, screenHistory},
+		{tea.KeyMsg{Type: tea.KeyCtrlL}, screenLogs},
+		{key("d"), screenContainers},
 	}
 	for _, tt := range tests {
-		t.Run(tt.key, func(t *testing.T) {
+		t.Run(tt.msg.String(), func(t *testing.T) {
 			// Given a server Dashboard.
 			m := Model{screen: screenDashboard, snapshot: snapshotWithServers("web")}
 			// When its diagnostic shortcut is pressed.
-			m, _ = updateModel(t, m, key(tt.key))
+			m, _ = updateModel(t, m, tt.msg)
 			// Then the corresponding explicit screen opens.
 			if m.screen != tt.want {
 				t.Fatalf("screen = %v, want %v", m.screen, tt.want)
 			}
 		})
+	}
+
+	// Given a server Dashboard, plain h and l are freed for navigation, not history/logs.
+	for _, k := range []string{"h", "l"} {
+		m := Model{screen: screenDashboard, snapshot: snapshotWithServers("web")}
+		m, _ = updateModel(t, m, key(k))
+		if m.screen != screenDashboard {
+			t.Fatalf("plain %q changed dashboard screen to %v", k, m.screen)
+		}
 	}
 
 	// Given Fleet instead of Dashboard.

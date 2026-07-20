@@ -35,7 +35,7 @@ func (m Model) renderDashboardWorkspace() string {
 		row1H := max(1, budget/3)
 		row2H := max(1, budget-row1H)
 		colW := (m.layout.width - 4) / 3
-		metricsCol := m.tilePanel(tileMetrics, "МЕТРИКИ", "p процессы · o порты · h история", colW,
+		metricsCol := m.tilePanel(tileMetrics, "МЕТРИКИ", "p процессы · o порты · ctrl+h история", colW,
 			fitPanelHeight(dashboardMetricsContent(server, colW, false), row1H, m.dashboard.tileScrolls[tileMetrics]))
 		netBody := append(fitPanelHeight(dashboardNetworkContent(server), max(1, row1H-1), m.dashboard.tileScrolls[tileNetwork]), networkText(server))
 		netCol := m.tilePanel(tileNetwork, "СЕТЬ", "o порты", colW, netBody)
@@ -46,18 +46,18 @@ func (m Model) renderDashboardWorkspace() string {
 			dockerW := (m.layout.width - 2) / 3
 			dockerCol := m.tilePanel(tileDocker, "DOCKER", "d контейнеры", dockerW,
 				fitPanelHeight(m.dashboardDockerContent(), row2H, m.dashboard.tileScrolls[tileDocker]))
-			logsCol := m.tilePanel(tileLogs, m.dashboardLogsTitle(), "l логи · x системный лог", m.layout.width-2-dockerW,
+			logsCol := m.tilePanel(tileLogs, m.dashboardLogsTitle(), "ctrl+l логи · x системный лог", m.layout.width-2-dockerW,
 				fitLogsHeight(m.dashboardLogsContent(), row2H, m.dashboard.tileScrolls[tileLogs]))
 			lines = append(lines, joinBoxes(dockerCol, logsCol))
 		} else {
-			lines = append(lines, m.tilePanel(tileLogs, m.dashboardLogsTitle(), "l логи · x системный лог", m.layout.width,
+			lines = append(lines, m.tilePanel(tileLogs, m.dashboardLogsTitle(), "ctrl+l логи · x системный лог", m.layout.width,
 				fitLogsHeight(m.dashboardLogsContent(), row2H, m.dashboard.tileScrolls[tileLogs]))...)
 		}
 		lines = append(lines, "")
 	} else {
 		lines = append(lines,
-			dimStyle.Render("p процессы · o порты · h история"),
-			dimStyle.Render("l логи · d контейнеры · f фильтр · x системный лог"),
+			dimStyle.Render("p процессы · o порты · ctrl+h история"),
+			dimStyle.Render("ctrl+l логи · d контейнеры · f фильтр · x системный лог"),
 		)
 		lines = append(lines, m.dashboardMetricsPanel(server)...)
 		lines = append(lines, m.dashboardDockerPanel()...)

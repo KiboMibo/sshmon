@@ -38,8 +38,8 @@ func TestLogsOpenStartsStreamAndIgnoresStaleLines(t *testing.T) {
 		logs:      newLogsScreen(),
 	}
 
-	// When: the logs screen is opened and its first stream line arrives.
-	updated, openCmd := updateModel(t, m, key("l"))
+	// When: the logs screen is opened (ctrl+l) and its first stream line arrives.
+	updated, openCmd := updateModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlL})
 	opened := openCmd().(logsOpenedMsg)
 	updated, waitCmd := updateModel(t, updated, opened)
 	lines <- "fresh"

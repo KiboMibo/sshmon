@@ -88,10 +88,10 @@ func TestDashboardWideDrawsBorderedPanelsWithLocalHints(t *testing.T) {
 	// Then every panel is framed and carries its own data-local hint in the border.
 	for _, want := range []string{
 		"╭", "╮", "╰", "╯",
-		"p процессы · o порты · h история",
+		"p процессы · o порты · ctrl+h история",
 		"d контейнеры",
 		"f фильтр · j/k · enter journal",
-		"l логи · x системный лог",
+		"ctrl+l логи · x системный лог",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("wide dashboard missing %q:\n%s", want, view)

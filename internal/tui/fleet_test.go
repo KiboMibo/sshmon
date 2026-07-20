@@ -82,14 +82,30 @@ func TestFleetNavigationFollowsGroupedDisplayOrder(t *testing.T) {
 	}
 }
 
-func TestFleetTableWidthTakesSixtyFivePercentWithFloor(t *testing.T) {
-	// Given wide and minimal layout widths.
-	// When computing the fleet table width.
-	// Then the table takes 65%% of the width with a floor of 42 cells.
-	if got := fleetTableWidth(120); got != 78 {
-		t.Fatalf("fleetTableWidth(120)=%d, want 78", got)
+func TestFleetWideDrawsTwoBorderedColumns(t *testing.T) {
+	// Given a wide Fleet with an online selected server carrying host details.
+	now := time.Now().Add(-5 * time.Second)
+	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{{Name: "kava", Group: "main", Online: true, Time: now, Hostname: "kava-claw", CPUPct: 1, MemPct: 44, Load1: 0.03, Uptime: 50 * time.Hour}}}
+	m := Model{screen: screenFleet, snapshot: snapshot, config: &config.Config{Servers: []config.Server{{Name: "kava", Host: "10.0.0.1", Group: "main"}}}}
+	m.layout = newLayout(140, 40)
+	// When the Fleet screen is rendered.
+	view := m.View()
+	// Then both columns are framed and the right column shows enlarged host details.
+	for _, want := range []string{"╭", "╮", "╰", "╯", "СЕРВЕРЫ", "kava-claw", "проблемы"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("wide fleet missing %q:\n%s", want, view)
+		}
 	}
-	if got := fleetTableWidth(60); got != 42 {
-		t.Fatalf("fleetTableWidth(60)=%d, want 42", got)
+}
+
+func TestFleetSelectedRowStyleTogglesGreen(t *testing.T) {
+	// Given the shared fleet row styles.
+	// When choosing the style for the selected versus other rows.
+	// Then the cursor row uses the green focus color and others stay dim gray.
+	if fleetRowStyle(true).GetForeground() != focusStyle.GetForeground() {
+		t.Fatalf("selected row color = %v, want focus %v", fleetRowStyle(true).GetForeground(), focusStyle.GetForeground())
+	}
+	if fleetRowStyle(false).GetForeground() != dimStyle.GetForeground() {
+		t.Fatalf("unselected row color = %v, want dim %v", fleetRowStyle(false).GetForeground(), dimStyle.GetForeground())
 	}
 }

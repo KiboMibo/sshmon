@@ -101,7 +101,7 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.screen = screenDashboard
 			return m, m.startDashboardWorkspace()
 		}
-	case "p", "o", "h", "l", "d":
+	case "p", "o", "d", "ctrl+h", "ctrl+l":
 		if m.screen == screenDashboard {
 			m.screen = dashboardDestination(value)
 			if m.screen == screenProcesses || m.screen == screenPorts || m.screen == screenContainers {
@@ -141,9 +141,9 @@ func dashboardDestination(key string) screenKind {
 		return screenProcesses
 	case "o":
 		return screenPorts
-	case "h":
+	case "ctrl+h":
 		return screenHistory
-	case "l":
+	case "ctrl+l":
 		return screenLogs
 	case "d":
 		return screenContainers
