@@ -91,14 +91,36 @@ func joinBoxes(left, right []string) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(left, "\n"), "  ", strings.Join(right, "\n"))
 }
 
-func equalizeBoxes(left, right []string) ([]string, []string) {
-	for len(left) < len(right) {
-		left = append(left, dimStyle.Render("NO DATA"))
+// fitPanelHeight приводит контент к ровно height строкам: короткий дополняется
+// пустыми строками снизу, длинный прокручивается сверху по scroll. Так каждый
+// ряд дашборда сохраняет фиксированную высоту без заполнителей NO DATA.
+func fitPanelHeight(content []string, height, scroll int) []string {
+	if height < 1 {
+		height = 1
 	}
-	for len(right) < len(left) {
-		right = append(right, dimStyle.Render("NO DATA"))
+	if len(content) <= height {
+		out := make([]string, height)
+		copy(out, content)
+		return out
 	}
-	return left, right
+	scroll = min(max(scroll, 0), len(content)-height)
+	return content[scroll : scroll+height]
+}
+
+// fitLogsHeight окно высотой height, привязанное к НИЗУ (свежие логи снизу):
+// scroll уводит окно к более старым строкам.
+func fitLogsHeight(content []string, height, scroll int) []string {
+	if height < 1 {
+		height = 1
+	}
+	if len(content) <= height {
+		out := make([]string, height)
+		copy(out, content)
+		return out
+	}
+	scroll = min(max(scroll, 0), len(content)-height)
+	end := len(content) - scroll
+	return content[end-height : end]
 }
 
 func containerStatusDot(status string) string {
@@ -176,22 +198,11 @@ func (m Model) dashboardLogsContent() []string {
 		}
 		return []string{dimStyle.Render("нет строк")}
 	}
-	window := m.dashboardLogWindow()
-	scroll := min(max(0, m.dashboard.tileScrolls[tileLogs]), max(0, len(m.dashboard.logs.lines)-1))
-	end := max(1, len(m.dashboard.logs.lines)-scroll)
-	start := max(0, end-window)
-	rows := make([]string, 0, end-start)
-	for _, line := range m.dashboard.logs.lines[start:end] {
+	rows := make([]string, 0, len(m.dashboard.logs.lines))
+	for _, line := range m.dashboard.logs.lines {
 		rows = append(rows, fitLine(line, m.layout.width-4))
 	}
 	return rows
-}
-
-func (m Model) dashboardLogWindow() int {
-	if !m.layout.wide {
-		return 5
-	}
-	return max(7, (m.layout.height-1)/3)
 }
 
 func (m Model) dashboardLogsTitle() string {

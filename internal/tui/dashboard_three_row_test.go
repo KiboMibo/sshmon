@@ -38,7 +38,7 @@ func TestDashboardWidePanelsNeverOverflowTerminalWidth(t *testing.T) {
 func TestDashboardThreeRowWideLayoutShowsWorkspacePanels(t *testing.T) {
 	// Given a wide dashboard with metrics and loaded Docker, systemd, and log data.
 	m := dashboardWorkspaceFixture()
-	m.layout = newLayout(120, 30)
+	m.layout = newLayout(120, 50)
 	m.dashboard.containers.items = []collect.Container{{Name: "api", Status: "Up", CPUPct: 3, MemPct: 4}}
 
 	// When the dashboard is rendered.

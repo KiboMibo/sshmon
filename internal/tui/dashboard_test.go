@@ -70,7 +70,7 @@ func TestDashboardShowsInterfaceAndDiskTables(t *testing.T) {
 	}
 
 	// When: the dashboard is rendered on a wide terminal.
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 50})
 	view := updated.(Model).View()
 
 	// Then: network table headers/rows + disk mount bars with GB labels.
@@ -114,7 +114,7 @@ func TestDashboardRetainsLastMetricsWhenServerIsOfflineOrStale(t *testing.T) {
 
 	// When: the dashboard is rendered and an unrelated history sink is unavailable.
 	m.snapshot.HistoryErr = "database locked"
-	m.layout = newLayout(100, 24)
+	m.layout = newLayout(100, 50)
 	view := m.View()
 
 	// Then: the server is offline but its last values and age remain visible.

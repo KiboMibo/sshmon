@@ -30,8 +30,12 @@ func (m Model) renderDashboardWorkspace() string {
 	}
 	if m.layout.wide {
 		pw := m.dashboardPanelWidth()
-		metricsC, systemdC := equalizeBoxes(m.dashboardMetricsPanel(server), m.dashboardUnitsContent())
-		netC, dockerC := equalizeBoxes(dashboardNetworkContent(server), m.dashboardDockerContent())
+		rowH := max(1, (m.layout.height-len(lines)-7)/3)
+		metricsC := fitPanelHeight(m.dashboardMetricsPanel(server), rowH, m.dashboard.tileScrolls[tileMetrics])
+		systemdC := fitPanelHeight(m.dashboardUnitsContent(), rowH, m.systemdScroll(rowH))
+		netC := fitPanelHeight(dashboardNetworkContent(server), rowH, m.dashboard.tileScrolls[tileNetwork])
+		dockerC := fitPanelHeight(m.dashboardDockerContent(), rowH, m.dashboard.tileScrolls[tileDocker])
+		logsC := fitLogsHeight(m.dashboardLogsContent(), rowH, m.dashboard.tileScrolls[tileLogs])
 		lines = append(lines,
 			joinBoxes(
 				panelBox(m.dashboardTileTitle(tileMetrics, "МЕТРИКИ"), "p процессы · o порты · h история", pw, metricsC),
@@ -42,7 +46,7 @@ func (m Model) renderDashboardWorkspace() string {
 				panelBox(m.dashboardTileTitle(tileDocker, "DOCKER"), "d контейнеры", pw, dockerC),
 			),
 		)
-		lines = append(lines, panelBox(m.dashboardTileTitle(tileLogs, m.dashboardLogsTitle()), "l логи · x системный лог", m.layout.width, m.dashboardLogsContent())...)
+		lines = append(lines, panelBox(m.dashboardTileTitle(tileLogs, m.dashboardLogsTitle()), "l логи · x системный лог", m.layout.width, logsC)...)
 	} else {
 		lines = append(lines,
 			dimStyle.Render("p процессы · o порты · h история"),

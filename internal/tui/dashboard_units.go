@@ -44,6 +44,22 @@ func (m Model) filteredDashboardUnits() []collect.SystemdUnit {
 	return units
 }
 
+func (m Model) systemdScroll(rowH int) int {
+	units := m.filteredDashboardUnits()
+	if len(units) == 0 {
+		return 0
+	}
+	offset := 0
+	if m.dashboard.unitUI.initialized && m.dashboard.unitUI.input.Value() != "" {
+		offset = 1
+	}
+	cursorRow := offset + min(m.dashboard.unitUI.cursor, len(units)-1)
+	if cursorRow >= rowH {
+		return cursorRow - rowH + 1
+	}
+	return 0
+}
+
 func (m *Model) clampDashboardUnitCursor() {
 	units := m.filteredDashboardUnits()
 	if len(units) == 0 {

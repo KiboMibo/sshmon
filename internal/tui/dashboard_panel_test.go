@@ -103,22 +103,40 @@ func TestDashboardWideDrawsBorderedPanelsWithLocalHints(t *testing.T) {
 	}
 }
 
-func TestEqualizeBoxesPadsShorterWithNoData(t *testing.T) {
+func TestDashboardWideHasNoNoDataFiller(t *testing.T) {
 	t.Parallel()
-	// Given two content slices of different heights.
-	left := []string{"row1", "row2", "row3"}
-	right := []string{"only-one"}
-	// When the slices are equalized.
-	l, r := equalizeBoxes(left, right)
-	// Then both have the same length and the shorter is padded with NO DATA rows.
-	if len(l) != len(r) {
-		t.Fatalf("len(left)=%d != len(right)=%d", len(l), len(r))
+	// Given a wide dashboard where SYSTEMD has many units but МЕТРИКИ is short.
+	m := dashboardWorkspaceFixture()
+	m.layout = newLayout(160, 50)
+	units := make([]collect.SystemdUnit, 25)
+	for i := range units {
+		units[i] = collect.SystemdUnit{Name: "svc" + string(rune('a'+i)) + ".service", Active: "active", Sub: "running"}
 	}
-	if len(r) != 3 {
-		t.Fatalf("want 3 rows each, got %d", len(r))
+	m.dashboard.units = dashboardUnitsState{items: units, status: diagnosticsReady}
+	// When the full view is rendered.
+	view := m.View()
+	// Then no NO DATA filler leaks into any panel — short cells use blank padding.
+	if strings.Contains(view, "NO DATA") {
+		t.Fatalf("view still contains NO DATA filler:\n%s", view)
 	}
-	if !strings.Contains(r[1], "NO DATA") || !strings.Contains(r[2], "NO DATA") {
-		t.Fatalf("right not padded with NO DATA: %#v", r)
+}
+
+func TestFitPanelHeightPadsAndScrolls(t *testing.T) {
+	t.Parallel()
+	// Given content shorter than the target height.
+	short := fitPanelHeight([]string{"a", "b"}, 5, 0)
+	// Then it is blank-padded to exactly the height with no NO DATA.
+	if len(short) != 5 {
+		t.Fatalf("short height=%d want 5", len(short))
+	}
+	if short[2] != "" || short[4] != "" {
+		t.Fatalf("padding is not blank: %#v", short)
+	}
+	// Given content taller than the height with a scroll offset.
+	long := fitPanelHeight([]string{"1", "2", "3", "4", "5"}, 2, 1)
+	// Then the window is exactly height rows, offset from the top.
+	if len(long) != 2 || long[0] != "2" || long[1] != "3" {
+		t.Fatalf("scroll window wrong: %#v", long)
 	}
 }
 
