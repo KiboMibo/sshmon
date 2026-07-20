@@ -32,7 +32,7 @@ func (m Model) renderDashboardWorkspace() string {
 	}
 	if m.layout.wide {
 		budget := max(2, m.layout.height-len(lines)-1-4)
-		row1H := max(1, budget*3/5)
+		row1H := max(1, budget/3)
 		row2H := max(1, budget-row1H)
 		colW := (m.layout.width - 4) / 3
 		metricsCol := m.tilePanel(tileMetrics, "МЕТРИКИ", "p процессы · o порты · h история", colW,
