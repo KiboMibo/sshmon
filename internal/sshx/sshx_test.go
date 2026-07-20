@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"errors"
+	"net"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -122,6 +123,57 @@ func TestSetPassphraseCopiesInputAndResetIsSafeWithoutConnection(t *testing.T) {
 	if got := string(client.passphrase); got != "memory-only" {
 		t.Fatal("client did not retain an independent passphrase copy")
 	}
+}
+
+func TestAuthMethodsAgentFirstSkipsPassphraseWhenAgentReachable(t *testing.T) {
+	// Given: зашифрованный приватный ключ в cfg.Key (без passphrase) И ssh-agent доступен.
+	t.Setenv("SSH_AUTH_SOCK", newFakeAgentSocket(t))
+	keyPath := writeEncryptedPrivateKey(t, []byte("correct horse"))
+
+	// When: authMethods собирает методы без passphrase.
+	methods, needsPassphrase, err := authMethods(config.Server{Key: keyPath}, nil)
+
+	// Then: агент забирает аутентификацию на себя — passphrase не требуется,
+	// и в methods есть хотя бы один способ (ssh-agent PublicKeysCallback).
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if needsPassphrase {
+		t.Fatal("agent-first: needsPassphrase must be false when ssh-agent is reachable")
+	}
+	if len(methods) == 0 {
+		t.Fatal("expected at least one auth method from ssh-agent")
+	}
+}
+
+// newFakeAgentSocket создаёт слушающий unix-сокет, имитирующий SSH_AUTH_SOCK.
+// Возвращает путь; закрывается через t.Cleanup.
+func newFakeAgentSocket(t *testing.T) string {
+	t.Helper()
+	// macOS sun_path ограничена ~104 символами — используем короткий /tmp.
+	dir, err := os.MkdirTemp("/tmp", "sshmon-agent")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	path := dir + "/s.sock"
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	// Принимаем соединения, но ничего не отвечаем — agent.NewClient(conn).Signers
+	// вернёт пустой список, что для теста контракта (needsPassphrase==false) достаточно.
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+	return path
 }
 
 func writeEncryptedPrivateKey(t *testing.T, passphrase []byte) string {

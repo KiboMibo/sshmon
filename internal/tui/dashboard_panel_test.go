@@ -34,6 +34,52 @@ func TestPanelBoxDrawsTitledTopAndHintedBottom(t *testing.T) {
 	}
 }
 
+func TestWrapWordsBreaksLongTextToFitWidth(t *testing.T) {
+	// Given: длинная строка с русским текстом, явно превышающая целевую ширину.
+	long := "host-key сервера не совпадает с записью в known_hosts — выполните ssh-keygen -R и переподключитесь"
+
+	// When: wrapWords сворачивает её по словам под ширину 40.
+	lines := wrapWords(long, 40)
+
+	// Then: каждая строка укладывается в ширину, строк больше одной, и ничего не потеряно.
+	if len(lines) < 2 {
+		t.Fatalf("expected multiple wrapped lines, got %d: %v", len(lines), lines)
+	}
+	for i, line := range lines {
+		if w := lipgloss.Width(line); w > 40 {
+			t.Fatalf("line %d width=%d > 40: %q", i, w, line)
+		}
+	}
+	joined := strings.Join(lines, " ")
+	for _, want := range []string{"host-key", "ssh-keygen", "переподключитесь"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("wrapped output lost %q: %v", want, lines)
+		}
+	}
+}
+
+func TestDashboardErrorRendersAsBorderedParagraphWithoutTruncation(t *testing.T) {
+	// Given: сервер с длинной ошибкой SSH, которая раньше обрезалась через fitLine.
+	m := dashboardWorkspaceFixture()
+	m.layout = newLayout(120, 30)
+	server := m.snapshot.Servers[0]
+	server.Online = false
+	server.Err = "host-key сервера не совпадает с записью в known_hosts — выполните ssh-keygen -R и переподключитесь"
+	m.snapshot.Servers[0] = server
+
+	// When: Dashboard рендерится.
+	view := m.View()
+
+	// Then: полный хвост ошибки виден (без обрезки), а не многоточие.
+	if !strings.Contains(view, "переподключитесь") {
+		t.Fatalf("error text was truncated, view:\n%s", view)
+	}
+	if strings.Contains(view, "…") {
+		// Допустимо только если есть отдельная обрезанная строка, но ошибка должна быть цельной.
+		t.Fatalf("view contains ellipsis (truncation), but error should wrap:\n%s", view)
+	}
+}
+
 func TestDashboardWideDrawsBorderedPanelsWithLocalHints(t *testing.T) {
 	// Given a wide dashboard with metrics, running Docker, systemd units, and logs.
 	m := dashboardWorkspaceFixture()

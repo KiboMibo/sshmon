@@ -18,7 +18,7 @@ func (m Model) renderDashboardWorkspace() string {
 		m.dashboardStatus(server),
 	}
 	if server.Err != "" {
-		lines = append(lines, fitLine("ошибка SSH: "+server.Err, m.layout.width))
+		lines = append(lines, panelBox("ОШИБКА SSH", "r переподключить", m.layout.width, wrapWords(server.Err, m.layout.width-4))...)
 	}
 	if !server.Online && server.Err != "" {
 		lines = append(lines, criticalStyle.Render("сервер недоступен — нажмите r для переподключения"))

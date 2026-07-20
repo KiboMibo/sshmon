@@ -149,7 +149,16 @@ func runCommand(ctx context.Context, output func() ([]byte, error), drop func())
 }
 
 func authMethods(cfg config.Server, passphrase []byte) ([]ssh.AuthMethod, bool, error) {
+	// Порядок как у openssh: ssh-agent → локальный файл ключа → пароль.
+	// Сначала agent, чтобы уже загруженные в ssh-add ключи работали без passphrase-промпта.
 	var out []ssh.AuthMethod
+	agentReachable := false
+	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
+		if conn, err := net.Dial("unix", sock); err == nil {
+			out = append(out, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
+			agentReachable = true
+		}
+	}
 	needsPassphrase := false
 	if cfg.Key != "" {
 		if b, err := os.ReadFile(cfg.Key); err == nil {
@@ -160,7 +169,11 @@ func authMethods(cfg config.Server, passphrase []byte) ([]ssh.AuthMethod, bool, 
 				var missing *ssh.PassphraseMissingError
 				if errors.As(parseErr, &missing) {
 					if len(passphrase) == 0 {
-						needsPassphrase = true
+						// Требуем passphrase только если ssh-agent недоступен —
+						// иначе пусть сервер сам попробует ключи из агента.
+						if !agentReachable {
+							needsPassphrase = true
+						}
 					} else {
 						signer, err = ssh.ParsePrivateKeyWithPassphrase(b, passphrase)
 						if err != nil {
@@ -170,11 +183,6 @@ func authMethods(cfg config.Server, passphrase []byte) ([]ssh.AuthMethod, bool, 
 					}
 				}
 			}
-		}
-	}
-	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
-		if conn, err := net.Dial("unix", sock); err == nil {
-			out = append(out, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
 		}
 	}
 	if cfg.Password != "" {

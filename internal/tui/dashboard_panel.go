@@ -42,6 +42,51 @@ func padCell(value string, width int) string {
 	return value
 }
 
+// wrapWords сворачивает text по словам так, чтобы каждая выходная строка
+// помещалась в width ячеек терминала (с учётом ANSI-цветов через lipgloss.Width).
+// Используется для длинных сообщений об ошибках в рамке panelBox вместо обрезки.
+func wrapWords(text string, width int) []string {
+	if width < 1 {
+		return []string{text}
+	}
+	var out []string
+	var line strings.Builder
+	lineW := 0
+	for _, word := range strings.Fields(text) {
+		ww := lipgloss.Width(word)
+		switch {
+		case lineW == 0:
+			if ww > width {
+				out = append(out, fitLine(word, width))
+				continue
+			}
+			line.WriteString(word)
+			lineW = ww
+		case lineW+1+ww <= width:
+			line.WriteByte(' ')
+			line.WriteString(word)
+			lineW += 1 + ww
+		default:
+			out = append(out, line.String())
+			line.Reset()
+			if ww > width {
+				out = append(out, fitLine(word, width))
+				lineW = 0
+				continue
+			}
+			line.WriteString(word)
+			lineW = ww
+		}
+	}
+	if lineW > 0 {
+		out = append(out, line.String())
+	}
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
+}
+
 func joinBoxes(left, right []string) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(left, "\n"), "  ", strings.Join(right, "\n"))
 }
