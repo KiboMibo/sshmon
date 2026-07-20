@@ -175,7 +175,7 @@ func TestProblemsTopStripRenderedAbovePanelsInWideMode(t *testing.T) {
 	m := dashboardWorkspaceFixture()
 	m.layout = newLayout(120, 30)
 	// Inject a problem
-	m.snapshot.Issues = []collect.Issue{{Server: "web-01", Severity: "warn", Msg: "test problem"}}
+	m.snapshot.Issues = []collect.Issue{{Server: m.snapshot.Servers[0].Name, Severity: "warn", Msg: "test problem"}}
 
 	// When
 	view := m.View()
@@ -191,6 +191,21 @@ func TestProblemsTopStripRenderedAbovePanelsInWideMode(t *testing.T) {
 	}
 	if probIdx > metricsIdx {
 		t.Errorf("expected ПРОБЛЕМЫ (%d) before МЕТРИКИ (%d)", probIdx, metricsIdx)
+	}
+}
+
+// TestProblemsPanelHiddenWhenNoIssues — Given a wide layout with no issues,
+// When the dashboard renders, Then no ПРОБЛЕМЫ panel appears (no empty block).
+func TestProblemsPanelHiddenWhenNoIssues(t *testing.T) {
+	// Given: a wide dashboard whose server has no issues.
+	m := dashboardWorkspaceFixture()
+	m.layout = newLayout(160, 50)
+	m.snapshot.Issues = nil
+	// When: the view is rendered.
+	view := m.View()
+	// Then: the ПРОБЛЕМЫ panel is absent.
+	if strings.Contains(view, "ПРОБЛЕМЫ") {
+		t.Fatalf("ПРОБЛЕМЫ panel should be hidden when there are no issues:\n%s", view)
 	}
 }
 

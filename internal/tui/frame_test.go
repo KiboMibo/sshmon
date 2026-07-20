@@ -60,15 +60,15 @@ func TestFleetHintsStayAboveBottomBorder(t *testing.T) {
 }
 
 func TestDashboardHintsStayAboveBottomBorder(t *testing.T) {
-	// Given Dashboard on a wide full-height terminal.
+	// Given Dashboard on a narrow full-height terminal (wide mode moves hints into panel borders).
 	m := Model{screen: screenDashboard, snapshot: snapshotWithServers("web")}
-	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 30})
+	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	// When the view is rendered.
 	view := m.View()
 
 	// Then Dashboard hints occupy the final content row.
-	assertFooterAboveBottomBorder(t, view, 30, "r переподключить")
+	assertFooterAboveBottomBorder(t, view, 24, "r переподключить")
 }
 
 func TestDeepScreenHintsStayAboveBottomBorder(t *testing.T) {

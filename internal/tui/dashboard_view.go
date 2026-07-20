@@ -23,30 +23,37 @@ func (m Model) renderDashboardWorkspace() string {
 	if !server.Online && server.Err != "" {
 		lines = append(lines, criticalStyle.Render("сервер недоступен — нажмите r для переподключения"))
 	}
-	if m.layout.wide {
-		lines = append(lines, panelBox("ПРОБЛЕМЫ", "r переподключить", m.layout.width, []string{m.dashboardIssues(server.Name)})...)
-	} else {
-		lines = append(lines, dimStyle.Render("ПРОБЛЕМЫ: "+m.dashboardIssues(server.Name)))
+	if len(issuesForServer(m.snapshot.Issues, server.Name)) > 0 {
+		if m.layout.wide {
+			lines = append(lines, panelBox("ПРОБЛЕМЫ", "r переподключить", m.layout.width, []string{m.dashboardIssues(server.Name)})...)
+		} else {
+			lines = append(lines, dimStyle.Render("ПРОБЛЕМЫ: "+m.dashboardIssues(server.Name)))
+		}
 	}
 	if m.layout.wide {
-		pw := m.dashboardPanelWidth()
-		rowH := max(1, (m.layout.height-len(lines)-7)/3)
-		metricsC := fitPanelHeight(m.dashboardMetricsPanel(server), rowH, m.dashboard.tileScrolls[tileMetrics])
-		systemdC := fitPanelHeight(m.dashboardUnitsContent(), rowH, m.systemdScroll(rowH))
-		netC := fitPanelHeight(dashboardNetworkContent(server), rowH, m.dashboard.tileScrolls[tileNetwork])
-		dockerC := fitPanelHeight(m.dashboardDockerContent(), rowH, m.dashboard.tileScrolls[tileDocker])
-		logsC := fitLogsHeight(m.dashboardLogsContent(), rowH, m.dashboard.tileScrolls[tileLogs])
-		lines = append(lines,
-			joinBoxes(
-				panelBox(m.dashboardTileTitle(tileMetrics, "МЕТРИКИ"), "p процессы · o порты · h история", pw, metricsC),
-				panelBox(m.dashboardTileTitle(tileSystemd, "SYSTEMD"), "f фильтр · j/k · enter journal", pw, systemdC),
-			),
-			joinBoxes(
-				panelBox(m.dashboardTileTitle(tileNetwork, "СЕТЬ"), "o порты", pw, netC),
-				panelBox(m.dashboardTileTitle(tileDocker, "DOCKER"), "d контейнеры", pw, dockerC),
-			),
-		)
-		lines = append(lines, panelBox(m.dashboardTileTitle(tileLogs, m.dashboardLogsTitle()), "l логи · x системный лог", m.layout.width, logsC)...)
+		budget := max(2, m.layout.height-len(lines)-1-4)
+		row1H := max(1, budget*3/5)
+		row2H := max(1, budget-row1H)
+		colW := (m.layout.width - 4) / 3
+		metricsCol := m.tilePanel(tileMetrics, "МЕТРИКИ", "p процессы · o порты · h история", colW,
+			fitPanelHeight(dashboardMetricsContent(server, colW, false), row1H, m.dashboard.tileScrolls[tileMetrics]))
+		netBody := append(fitPanelHeight(dashboardNetworkContent(server), max(1, row1H-1), m.dashboard.tileScrolls[tileNetwork]), networkText(server))
+		netCol := m.tilePanel(tileNetwork, "СЕТЬ", "o порты", colW, netBody)
+		systemdCol := m.tilePanel(tileSystemd, "SYSTEMD", "f фильтр · j/k · enter journal", colW,
+			fitPanelHeight(m.dashboardUnitsContent(), row1H, m.systemdScroll(row1H)))
+		lines = append(lines, joinBoxes(metricsCol, netCol, systemdCol))
+		if m.dashboardHasDocker() {
+			dockerW := (m.layout.width - 2) / 3
+			dockerCol := m.tilePanel(tileDocker, "DOCKER", "d контейнеры", dockerW,
+				fitPanelHeight(m.dashboardDockerContent(), row2H, m.dashboard.tileScrolls[tileDocker]))
+			logsCol := m.tilePanel(tileLogs, m.dashboardLogsTitle(), "l логи · x системный лог", m.layout.width-2-dockerW,
+				fitLogsHeight(m.dashboardLogsContent(), row2H, m.dashboard.tileScrolls[tileLogs]))
+			lines = append(lines, joinBoxes(dockerCol, logsCol))
+		} else {
+			lines = append(lines, m.tilePanel(tileLogs, m.dashboardLogsTitle(), "l логи · x системный лог", m.layout.width,
+				fitLogsHeight(m.dashboardLogsContent(), row2H, m.dashboard.tileScrolls[tileLogs]))...)
+		}
+		lines = append(lines, "")
 	} else {
 		lines = append(lines,
 			dimStyle.Render("p процессы · o порты · h история"),
@@ -57,8 +64,8 @@ func (m Model) renderDashboardWorkspace() string {
 		lines = append(lines, dashboardNetworkPanel(server)...)
 		lines = append(lines, m.dashboardUnitsPanel()...)
 		lines = append(lines, m.dashboardLogsPanel()...)
+		lines = append(lines, dimStyle.Render("j/k юнит · enter journal · r переподключить · c чат · esc назад"))
 	}
-	lines = append(lines, dimStyle.Render("j/k юнит · enter journal · r переподключить · c чат · esc назад"))
 	return strings.Join(lines, "\n")
 }
 
@@ -150,4 +157,13 @@ func (m Model) dashboardPanelWidth() int {
 		return m.layout.width
 	}
 	return max(32, (m.layout.width-2)/2)
+}
+
+func (m Model) tilePanel(tile uint8, title, hint string, width int, content []string) []string {
+	return panelBoxStyled(title, hint, width, content, m.tileBorderStyle(tile))
+}
+
+func (m Model) dashboardHasDocker() bool {
+	c := m.dashboard.containers
+	return len(c.items) > 0 && c.status != diagnosticsUnsupported && c.status != diagnosticsError
 }

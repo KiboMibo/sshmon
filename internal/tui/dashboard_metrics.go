@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/kibomibo/sshmon/internal/collect"
 )
 
@@ -74,33 +76,25 @@ func diskBars(server collect.Metrics, width int) []string {
 // MEM bar with RAM/SWAP under it, blank line, ДИСКИ header + per-mount
 // bars + IO line. Problems are NOT included here (moved to top strip).
 func dashboardMetricsContent(server collect.Metrics, width int, compact bool) []string {
-	cpuBarW := width - 18
-	if cpuBarW < 10 {
-		cpuBarW = 10
-	}
-	cpu := gauge(server.CPUPct, cpuBarW)
+	barW := max(10, width-18)
 	loadLine := fmt.Sprintf("%s  %s  %s  %s · %d ядер",
 		loadColorStyle(server.Load1, server.NumCPU),
 		loadColorStyle(server.Load5, server.NumCPU),
 		loadColorStyle(server.Load15, server.NumCPU),
 		dimStyle.Render("load"),
 		server.NumCPU)
-
-	memBarW := width - 18
-	if memBarW < 10 {
-		memBarW = 10
-	}
-	mem := gauge(server.MemPct, memBarW)
+	indent := 8 + max(0, (barW-lipgloss.Width(loadLine))/2)
+	loadLine = strings.Repeat(" ", indent) + loadLine
 
 	rows := []string{
-		fmt.Sprintf("%s  %s  %3.0f%%", titleStyle.Render("CPU"), cpu, server.CPUPct),
+		fmt.Sprintf("%s  %s  %3.0f%%", titleStyle.Render(padLabel("CPU", 6)), gauge(server.CPUPct, barW), server.CPUPct),
 		loadLine,
 	}
 	if !compact {
 		rows = append(rows, "")
 	}
 	rows = append(rows,
-		fmt.Sprintf("%s  %s  %3.0f%%", titleStyle.Render("ПАМЯТЬ"), mem, server.MemPct),
+		fmt.Sprintf("%s  %s  %3.0f%%", titleStyle.Render(padLabel("ПАМЯТЬ", 6)), gauge(server.MemPct, barW), server.MemPct),
 		memoryText(server),
 		"SWAP     "+swapText(server),
 	)
@@ -112,5 +106,9 @@ func dashboardMetricsContent(server collect.Metrics, width int, compact bool) []
 	return rows
 }
 
-// ensure no unused import warning if strings becomes used later
-var _ = strings.TrimSpace
+func padLabel(label string, width int) string {
+	for lipgloss.Width(label) < width {
+		label += " "
+	}
+	return label
+}

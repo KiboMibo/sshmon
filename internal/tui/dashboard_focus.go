@@ -3,6 +3,7 @@ package tui
 import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kibomibo/sshmon/internal/collect"
 )
@@ -31,12 +32,12 @@ func (m *Model) clampDashboardScroll(idx uint8) {
 	}
 }
 
-// dashboardTileTitle помечает сфокусированную плитку ромбом.
-func (m Model) dashboardTileTitle(idx uint8, title string) string {
+// tileBorderStyle подсвечивает рамку сфокусированной плитки зелёным.
+func (m Model) tileBorderStyle(idx uint8) lipgloss.Style {
 	if m.dashboard.tileFocus == idx {
-		return "◆ " + title
+		return focusStyle
 	}
-	return title
+	return dimStyle
 }
 
 // handleDashboardFocusKey обрабатывает навигацию lazydocker-стиля, когда

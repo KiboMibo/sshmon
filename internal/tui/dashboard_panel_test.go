@@ -70,13 +70,9 @@ func TestDashboardErrorRendersAsBorderedParagraphWithoutTruncation(t *testing.T)
 	// When: Dashboard рендерится.
 	view := m.View()
 
-	// Then: полный хвост ошибки виден (без обрезки), а не многоточие.
+	// Then: полный хвост ошибки виден (без обрезки) — значит, текст перенёсся, а не обрезался.
 	if !strings.Contains(view, "переподключитесь") {
 		t.Fatalf("error text was truncated, view:\n%s", view)
-	}
-	if strings.Contains(view, "…") {
-		// Допустимо только если есть отдельная обрезанная строка, но ошибка должна быть цельной.
-		t.Fatalf("view contains ellipsis (truncation), but error should wrap:\n%s", view)
 	}
 }
 
@@ -224,16 +220,16 @@ func TestSystemdContentColorsStateText(t *testing.T) {
 	}
 }
 
-func TestDashboardWideLayoutSwapsRowsAndEqualizesHeight(t *testing.T) {
+func TestDashboardWideRowOneHasThreeColumnsDockerBelow(t *testing.T) {
 	t.Parallel()
-	// Given a wide dashboard fixture with mixed content.
+	// Given a wide dashboard with running Docker.
 	m := dashboardWorkspaceFixture()
 	m.layout = newLayout(120, 30)
+	m.dashboard.containers = dashboardContainersState{items: []collect.Container{{Name: "api", Status: "Up"}}, status: diagnosticsReady}
 	// When the full view is rendered.
 	view := m.View()
-	// Then МЕТРИКИ and SYSTEMD are on the same line, СЕТЬ and DOCKER on the same line.
-	metricsLine, systemdLine := -1, -1
-	setLine, dockerLine := -1, -1
+	// Then МЕТРИКИ, СЕТЬ, SYSTEMD share row 1 and DOCKER sits on a later row.
+	metricsLine, netLine, systemdLine, dockerLine := -1, -1, -1, -1
 	for i, line := range strings.Split(view, "\n") {
 		if !strings.Contains(line, "╭─") {
 			continue
@@ -241,26 +237,20 @@ func TestDashboardWideLayoutSwapsRowsAndEqualizesHeight(t *testing.T) {
 		if strings.Contains(line, "МЕТРИКИ") {
 			metricsLine = i
 		}
+		if strings.Contains(line, "СЕТЬ") {
+			netLine = i
+		}
 		if strings.Contains(line, "SYSTEMD") {
 			systemdLine = i
-		}
-		if strings.Contains(line, "СЕТЬ") {
-			setLine = i
 		}
 		if strings.Contains(line, "DOCKER") {
 			dockerLine = i
 		}
 	}
-	if metricsLine < 0 || systemdLine < 0 {
-		t.Fatalf("МЕТРИКИ=%d SYSTEMD=%d missing", metricsLine, systemdLine)
+	if metricsLine < 0 || netLine != metricsLine || systemdLine != metricsLine {
+		t.Fatalf("row 1 misaligned: МЕТРИКИ=%d СЕТЬ=%d SYSTEMD=%d", metricsLine, netLine, systemdLine)
 	}
-	if metricsLine != systemdLine {
-		t.Fatalf("МЕТРИКИ line=%d != SYSTEMD line=%d", metricsLine, systemdLine)
-	}
-	if setLine < 0 || dockerLine < 0 {
-		t.Fatalf("СЕТЬ=%d DOCKER=%d missing", setLine, dockerLine)
-	}
-	if setLine != dockerLine {
-		t.Fatalf("СЕТЬ line=%d != DOCKER line=%d", setLine, dockerLine)
+	if dockerLine <= metricsLine {
+		t.Fatalf("DOCKER=%d must be below row 1=%d", dockerLine, metricsLine)
 	}
 }

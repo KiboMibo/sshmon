@@ -103,24 +103,19 @@ func TestDashboardSystemdFocusPreservesCursorBehavior(t *testing.T) {
 	}
 }
 
-// TestDashboardRendersFocusIndicatorOnActiveTile verifies the focused tile gets a visual marker in its title.
+// TestDashboardRendersFocusIndicatorOnActiveTile verifies the focused tile gets a green border.
 // Given: a wide Dashboard with focus on the metrics tile.
-// When:  rendering the view.
-// Then:  the МЕТРИКИ panel title contains a focus marker (◆).
+// When:  the border style is resolved per tile.
+// Then:  the focused tile uses focusStyle (green) and others stay dim.
 func TestDashboardRendersFocusIndicatorOnActiveTile(t *testing.T) {
 	m := dashboardWorkspaceFixture()
-	m.layout = newLayout(120, 30)
 	m.dashboard.tileFocus = tileMetrics
 
-	view := m.View()
-
-	// Then: МЕТРИКИ title shows the focus marker.
-	if !strings.Contains(view, "◆ МЕТРИКИ") && !strings.Contains(view, "◆МЕТРИКИ") {
-		t.Errorf("focused МЕТРИКИ panel must contain ◆ marker; view:\n%s", view)
+	if m.tileBorderStyle(tileMetrics).GetForeground() != focusStyle.GetForeground() {
+		t.Errorf("focused tile must use the green focus border")
 	}
-	// And: another panel (e.g. SYSTEMD) does NOT have the marker.
-	if strings.Contains(view, "◆ SYSTEMD") || strings.Contains(view, "◆SYSTEMD") {
-		t.Errorf("non-focused SYSTEMD panel must NOT contain ◆ marker; view:\n%s", view)
+	if m.tileBorderStyle(tileSystemd).GetForeground() != dimStyle.GetForeground() {
+		t.Errorf("non-focused tile must keep the dim border")
 	}
 }
 

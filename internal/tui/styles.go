@@ -8,6 +8,7 @@ var (
 	overlayStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
 	goodStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	criticalStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	focusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	warnStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	frameStyle    = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("241"))
 )

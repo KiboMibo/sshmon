@@ -12,24 +12,29 @@ import (
 // panelBox frames content with a titled top border and a hinted bottom border,
 // so each Dashboard cell is visually separated and documents its own controls.
 func panelBox(title, hint string, width int, content []string) []string {
+	return panelBoxStyled(title, hint, width, content, dimStyle)
+}
+
+func panelBoxStyled(title, hint string, width int, content []string, border lipgloss.Style) []string {
 	if width < 6 {
 		width = 6
 	}
 	lines := make([]string, 0, len(content)+2)
-	lines = append(lines, borderLine("╭", "╮", title, width))
+	lines = append(lines, borderLine("╭", "╮", title, width, border))
 	inner := width - 4
+	bar := border.Render("│")
 	for _, row := range content {
-		lines = append(lines, dimStyle.Render("│")+" "+padCell(row, inner)+" "+dimStyle.Render("│"))
+		lines = append(lines, bar+" "+padCell(row, inner)+" "+bar)
 	}
-	return append(lines, borderLine("╰", "╯", hint, width))
+	return append(lines, borderLine("╰", "╯", hint, width, border))
 }
 
-func borderLine(left, right, label string, width int) string {
+func borderLine(left, right, label string, width int, border lipgloss.Style) string {
 	if label == "" {
-		return dimStyle.Render(left + strings.Repeat("─", width-2) + right)
+		return border.Render(left + strings.Repeat("─", width-2) + right)
 	}
 	fill := max(1, width-5-lipgloss.Width(label))
-	return dimStyle.Render(left+"─ ") + titleStyle.Render(label) + dimStyle.Render(" "+strings.Repeat("─", fill)+right)
+	return border.Render(left+"─ ") + titleStyle.Render(label) + border.Render(" "+strings.Repeat("─", fill)+right)
 }
 
 func padCell(value string, width int) string {
@@ -87,8 +92,15 @@ func wrapWords(text string, width int) []string {
 	return out
 }
 
-func joinBoxes(left, right []string) string {
-	return lipgloss.JoinHorizontal(lipgloss.Top, strings.Join(left, "\n"), "  ", strings.Join(right, "\n"))
+func joinBoxes(cols ...[]string) string {
+	parts := make([]string, 0, max(0, len(cols)*2-1))
+	for i, col := range cols {
+		if i > 0 {
+			parts = append(parts, "  ")
+		}
+		parts = append(parts, strings.Join(col, "\n"))
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
 }
 
 // fitPanelHeight приводит контент к ровно height строкам: короткий дополняется
@@ -165,7 +177,7 @@ func (m Model) dashboardDockerContent() []string {
 }
 
 func dashboardNetworkContent(server collect.Metrics) []string {
-	return append([]string{networkText(server)}, netTable(server)...)
+	return netTable(server)
 }
 
 func (m Model) dashboardUnitsContent() []string {

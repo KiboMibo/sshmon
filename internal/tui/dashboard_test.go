@@ -70,7 +70,7 @@ func TestDashboardShowsInterfaceAndDiskTables(t *testing.T) {
 	}
 
 	// When: the dashboard is rendered on a wide terminal.
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 50})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 160, Height: 50})
 	view := updated.(Model).View()
 
 	// Then: network table headers/rows + disk mount bars with GB labels.

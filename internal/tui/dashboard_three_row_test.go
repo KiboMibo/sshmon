@@ -38,14 +38,14 @@ func TestDashboardWidePanelsNeverOverflowTerminalWidth(t *testing.T) {
 func TestDashboardThreeRowWideLayoutShowsWorkspacePanels(t *testing.T) {
 	// Given a wide dashboard with metrics and loaded Docker, systemd, and log data.
 	m := dashboardWorkspaceFixture()
-	m.layout = newLayout(120, 50)
+	m.layout = newLayout(160, 50)
 	m.dashboard.containers.items = []collect.Container{{Name: "api", Status: "Up", CPUPct: 3, MemPct: 4}}
 
 	// When the dashboard is rendered.
 	view := m.View()
 
-	// Then all three workspace rows expose their operational data and controls.
-	for _, want := range []string{"CPU", "ДИСКИ / IO", "ПРОБЛЕМЫ", "DOCKER", "api", "СЕТЬ", "SYSTEMD", "sshd.service", "ЛОГИ · SYSTEM", "system ready", "f фильтр", "x системный лог"} {
+	// Then all workspace panels expose their operational data and controls.
+	for _, want := range []string{"CPU", "ДИСКИ / IO", "DOCKER", "api", "СЕТЬ", "SYSTEMD", "sshd.service", "ЛОГИ · SYSTEM", "system ready", "f фильтр", "x системный лог"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("wide dashboard missing %q:\n%s", want, view)
 		}
