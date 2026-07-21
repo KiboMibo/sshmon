@@ -39,7 +39,8 @@ func (c *Client) conn() (*ssh.Client, error) {
 	if c.c != nil {
 		return c.c, nil
 	}
-	auth, needsPassphrase, err := authMethods(c.cfg, c.passphrase)
+	auth, needsPassphrase, cleanup, err := authMethods(c.cfg, c.passphrase)
+	defer cleanup()
 	if err != nil {
 		return nil, err
 	}
@@ -149,15 +150,19 @@ func runCommand(ctx context.Context, output func() ([]byte, error), drop func())
 	}
 }
 
-func authMethods(cfg config.Server, passphrase []byte) ([]ssh.AuthMethod, bool, error) {
+func authMethods(cfg config.Server, passphrase []byte) ([]ssh.AuthMethod, bool, func(), error) {
 	// Порядок как у openssh: ssh-agent → локальный файл ключа → пароль.
 	// Сначала agent, чтобы уже загруженные в ssh-add ключи работали без passphrase-промпта.
+	cleanup := func() {}
 	var out []ssh.AuthMethod
 	agentReachable := false
 	expected := publicKeyFromKeyFile(cfg.Key, passphrase)
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
 		if conn, err := net.Dial("unix", sock); err == nil {
-			defer conn.Close() // fd-leak fix: agent conn не закрывался ранее.
+			// Соединение с агентом должно жить до конца ssh.Dial: agent-signer'ы
+			// вызывают Sign() по этому conn во время handshake. Закрывает вызывающий
+			// через cleanup(), иначе "use of closed network connection".
+			cleanup = func() { _ = conn.Close() }
 			if expected == nil {
 				// Не можем вывести публичный ключ cfg.Key — предлагаем все ключи агента
 				// (старое поведение). Callback вычисляет signers лениво, при аутентификации.
@@ -193,7 +198,7 @@ func authMethods(cfg config.Server, passphrase []byte) ([]ssh.AuthMethod, bool, 
 					} else {
 						signer, err = ssh.ParsePrivateKeyWithPassphrase(b, passphrase)
 						if err != nil {
-							return nil, false, ErrInvalidPassphrase
+							return nil, false, cleanup, ErrInvalidPassphrase
 						}
 						out = append(out, ssh.PublicKeys(signer))
 					}
@@ -204,7 +209,7 @@ func authMethods(cfg config.Server, passphrase []byte) ([]ssh.AuthMethod, bool, 
 	if cfg.Password != "" {
 		out = append(out, ssh.Password(cfg.Password))
 	}
-	return out, needsPassphrase, nil
+	return out, needsPassphrase, cleanup, nil
 }
 
 // filterAgentSigners ограничивает список signer'ов агента теми, чей публичный ключ

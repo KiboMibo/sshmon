@@ -11,8 +11,10 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/kibomibo/sshmon/internal/config"
 )
@@ -55,7 +57,7 @@ func TestAuthMethodsRequiresPassphraseForEncryptedKey(t *testing.T) {
 	keyPath := writeEncryptedPrivateKey(t, []byte("correct horse"))
 
 	// When authentication methods are built without a passphrase.
-	methods, needsPassphrase, err := authMethods(config.Server{Key: keyPath}, nil)
+	methods, needsPassphrase, _, err := authMethods(config.Server{Key: keyPath}, nil)
 
 	// Then the key is classified without leaking a parser error.
 	if err != nil || len(methods) != 0 || !needsPassphrase {
@@ -69,7 +71,7 @@ func TestAuthMethodsPreservesPasswordFallbackForEncryptedKey(t *testing.T) {
 	keyPath := writeEncryptedPrivateKey(t, []byte("correct horse"))
 
 	// When authentication methods are built without a key passphrase.
-	methods, needsPassphrase, err := authMethods(config.Server{Key: keyPath, Password: "fallback"}, nil)
+	methods, needsPassphrase, _, err := authMethods(config.Server{Key: keyPath, Password: "fallback"}, nil)
 
 	// Then password authentication remains available before prompting.
 	if err != nil || len(methods) != 1 || !needsPassphrase {
@@ -83,7 +85,7 @@ func TestAuthMethodsUnlocksEncryptedKeyWithPassphrase(t *testing.T) {
 	keyPath := writeEncryptedPrivateKey(t, []byte("correct horse"))
 
 	// When its correct passphrase is supplied.
-	methods, needsPassphrase, err := authMethods(config.Server{Key: keyPath}, []byte("correct horse"))
+	methods, needsPassphrase, _, err := authMethods(config.Server{Key: keyPath}, []byte("correct horse"))
 
 	// Then public-key authentication becomes available.
 	if err != nil || len(methods) != 1 || needsPassphrase {
@@ -98,7 +100,7 @@ func TestAuthMethodsRejectsWrongPassphraseWithoutLeakingIt(t *testing.T) {
 	wrong := "do-not-leak-me"
 
 	// When authentication methods are built with that secret.
-	_, _, err := authMethods(config.Server{Key: keyPath}, []byte(wrong))
+	_, _, _, err := authMethods(config.Server{Key: keyPath}, []byte(wrong))
 
 	// Then callers receive a typed, secret-free error.
 	if !errors.Is(err, ErrInvalidPassphrase) {
@@ -131,7 +133,7 @@ func TestAuthMethodsAgentFirstSkipsPassphraseWhenAgentReachable(t *testing.T) {
 	keyPath := writeEncryptedPrivateKey(t, []byte("correct horse"))
 
 	// When: authMethods собирает методы без passphrase.
-	methods, needsPassphrase, err := authMethods(config.Server{Key: keyPath}, nil)
+	methods, needsPassphrase, _, err := authMethods(config.Server{Key: keyPath}, nil)
 
 	// Then: агент забирает аутентификацию на себя — passphrase не требуется,
 	// и в methods есть хотя бы один способ (ssh-agent PublicKeysCallback).
@@ -143,6 +145,58 @@ func TestAuthMethodsAgentFirstSkipsPassphraseWhenAgentReachable(t *testing.T) {
 	}
 	if len(methods) == 0 {
 		t.Fatal("expected at least one auth method from ssh-agent")
+	}
+}
+
+func TestAuthMethodsKeepsAgentConnOpenUntilCleanup(t *testing.T) {
+	// Given: реальный ssh-agent на unix-сокете; ServeAgent завершается при закрытии conn.
+	dir, err := os.MkdirTemp("/tmp", "sshmon-live-agent")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := dir + "/s.sock"
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	served := make(chan struct{})
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_ = agent.ServeAgent(agent.NewKeyring(), conn)
+		close(served)
+	}()
+	t.Setenv("SSH_AUTH_SOCK", sock)
+
+	// When: собираем методы аутентификации (cfg.Key пуст → callback-путь агента).
+	methods, _, cleanup, err := authMethods(config.Server{}, nil)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(methods) == 0 {
+		t.Fatal("expected agent auth method")
+	}
+
+	// Then: соединение с агентом ещё открыто — ssh.Dial вызывает Sign() уже после authMethods;
+	// закрытие раньше времени даёт "use of closed network connection".
+	select {
+	case <-served:
+		t.Fatal("agent conn closed before cleanup")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// When: вызывающий закрывает соединение после ssh.Dial.
+	cleanup()
+
+	// Then: соединение с агентом закрывается.
+	select {
+	case <-served:
+	case <-time.After(2 * time.Second):
+		t.Fatal("agent conn not closed after cleanup")
 	}
 }
 
