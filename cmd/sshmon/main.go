@@ -16,6 +16,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/kibomibo/sshmon/internal/buildinfo"
 	"github.com/kibomibo/sshmon/internal/collect"
 	"github.com/kibomibo/sshmon/internal/config"
 	"github.com/kibomibo/sshmon/internal/history"
@@ -25,25 +26,33 @@ import (
 	"github.com/kibomibo/sshmon/internal/tui"
 )
 
-var version = "0.3.0"
-
 func writeVersion(w io.Writer, v string) {
 	fmt.Fprintf(w, "sshmon %s\n", v)
 }
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+// run содержит весь жизненный цикл процесса. Возврат ошибки (вместо os.Exit
+// из вложенных хелперов) гарантирует, что defer-cleanup ниже — остановка
+// сбора и flush истории — выполнится на всех путях выхода, включая ошибки
+// headless MCP и TUI.
+func run() error {
 	cfgPath := flag.String("config", config.DefaultPath(), "путь к config.yaml")
 	headless := flag.Bool("headless", false, "без TUI: сбор метрик + MCP-сервер на stdio")
 	importFlag := flag.Bool("import", false, "добавить серверы из ~/.ssh/config в существующий конфиг")
 	versionFlag := flag.Bool("version", false, "показать версию и выйти")
 	flag.Parse()
 	if *versionFlag {
-		writeVersion(os.Stdout, version)
-		return
+		writeVersion(os.Stdout, buildinfo.Version)
+		return nil
 	}
 	if *importFlag && *headless {
-		fmt.Fprintln(os.Stderr, "sshmon: --import нельзя использовать вместе с --headless")
-		os.Exit(1)
+		return errors.New("sshmon: --import нельзя использовать вместе с --headless")
 	}
 
 	cfg, err := config.Load(*cfgPath)
@@ -52,18 +61,29 @@ func main() {
 		missing := errors.Is(err, fs.ErrNotExist)
 		empty := errors.Is(err, config.ErrNoServers)
 		if (missing || empty) && !*headless {
-			cfg = firstRun(*cfgPath, empty)
+			c, ferr := firstRun(*cfgPath, empty)
+			if ferr != nil {
+				return ferr
+			}
+			cfg = c
 		}
 		if cfg == nil {
 			if missing {
-				writeTemplateAndExit(*cfgPath, err)
+				return writeTemplate(*cfgPath, err)
 			}
-			fmt.Fprintf(os.Stderr, "sshmon: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("sshmon: %v", err)
 		}
 	}
 	if *importFlag && loaded {
-		cfg = importServers(*cfgPath, cfg)
+		c, ferr := importServers(*cfgPath, cfg)
+		if ferr != nil {
+			return ferr
+		}
+		cfg = c
+	}
+
+	if w := config.SecretPermWarning(*cfgPath, cfg); w != "" {
+		fmt.Fprintln(os.Stderr, w)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -100,18 +120,15 @@ func main() {
 	if *headless {
 		log.SetOutput(os.Stderr)
 		log.Printf("sshmon headless: %d серверов, интервал %s, MCP на stdio", len(cfg.Servers), cfg.Interval)
-		if err := mcpsrv.Serve(ctx, col); err != nil {
-			log.Fatal(err)
-		}
-		return
+		return mcpsrv.Serve(ctx, col)
 	}
 
 	model := tui.New(col, llm.New(cfg.LLM), cfg).WithHistory(historyService)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return err
 	}
+	return nil
 }
 
 func openHistory(cfg config.History, stderr io.Writer) *history.Service {
@@ -145,20 +162,18 @@ func maintainHistory(ctx context.Context, service *history.Service, stderr io.Wr
 }
 
 // firstRun предлагает выбрать серверы из ~/.ssh/config для нового или пустого конфига.
-// Возвращает загруженный конфиг или nil (тогда вызывающий пишет шаблон).
-func firstRun(cfgPath string, populate bool) *config.Config {
+// Возвращает (nil, nil), когда ssh-конфига нет — тогда вызывающий пишет шаблон.
+func firstRun(cfgPath string, populate bool) (*config.Config, error) {
 	hosts, err := config.ParseSSHConfig(config.DefaultSSHConfigPath())
 	if err != nil || len(hosts) == 0 {
-		return nil // нет ssh-конфига — fallback на шаблон
+		return nil, nil // нет ssh-конфига — fallback на шаблон
 	}
 	servers, err := setup.Run(hosts)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "sshmon: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("sshmon: %w", err)
 	}
 	if len(servers) == 0 {
-		fmt.Fprintln(os.Stderr, "Ничего не выбрано — выход. Конфиг не создан.")
-		os.Exit(1)
+		return nil, errors.New("Ничего не выбрано — выход. Конфиг не создан.")
 	}
 	var saveErr error
 	if populate {
@@ -167,59 +182,54 @@ func firstRun(cfgPath string, populate bool) *config.Config {
 		saveErr = config.WriteWithServers(cfgPath, servers)
 	}
 	if saveErr != nil {
-		fmt.Fprintf(os.Stderr, "sshmon: не удалось сохранить конфиг: %v\n", saveErr)
-		os.Exit(1)
+		return nil, fmt.Errorf("sshmon: не удалось сохранить конфиг: %w", saveErr)
 	}
 	fmt.Fprintf(os.Stderr, "Создан конфиг %s (%d серверов).\n", cfgPath, len(servers))
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "sshmon: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("sshmon: %w", err)
 	}
-	return cfg
+	return cfg, nil
 }
 
-func importServers(cfgPath string, cfg *config.Config) *config.Config {
+func importServers(cfgPath string, cfg *config.Config) (*config.Config, error) {
 	hosts, err := config.ParseSSHConfig(config.DefaultSSHConfigPath())
 	if err != nil || len(hosts) == 0 {
 		fmt.Fprintln(os.Stderr, "sshmon: в ~/.ssh/config нет хостов для импорта")
-		return cfg
+		return cfg, nil
 	}
 	hosts = config.RemainingHosts(hosts, cfg.Servers)
 	if len(hosts) == 0 {
 		fmt.Fprintln(os.Stderr, "Все хосты из ~/.ssh/config уже есть в конфиге.")
-		return cfg
+		return cfg, nil
 	}
 
 	servers, err := setup.Run(hosts)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "sshmon: ошибка выбора серверов: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("sshmon: ошибка выбора серверов: %w", err)
 	}
 	if len(servers) == 0 {
 		fmt.Fprintln(os.Stderr, "Ничего не выбрано — конфиг не изменён.")
-		return cfg
+		return cfg, nil
 	}
 
 	added, err := config.AddServers(cfgPath, servers)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "sshmon: не удалось сохранить конфиг: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("sshmon: не удалось сохранить конфиг: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "Добавлено серверов: %d.\n", added)
 	updated, err := config.Load(cfgPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "sshmon: не удалось загрузить обновлённый конфиг: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("sshmon: не удалось загрузить обновлённый конфиг: %w", err)
 	}
-	return updated
+	return updated, nil
 }
 
-func writeTemplateAndExit(cfgPath string, loadErr error) {
+// writeTemplate создаёт конфиг-шаблон и возвращает ошибку, сигнализирующую
+// вызывающему завершиться с кодом 1 (пользователь должен вписать серверы).
+func writeTemplate(cfgPath string, loadErr error) error {
 	if werr := config.WriteDefault(cfgPath); werr != nil {
-		fmt.Fprintf(os.Stderr, "sshmon: %v\nне удалось создать конфиг: %v\n", loadErr, werr)
-	} else {
-		fmt.Fprintf(os.Stderr, "Создан конфиг %s — добавьте свои серверы и запустите sshmon снова.\n", cfgPath)
+		return fmt.Errorf("sshmon: %v\nне удалось создать конфиг: %v", loadErr, werr)
 	}
-	os.Exit(1)
+	return fmt.Errorf("Создан конфиг %s — добавьте свои серверы и запустите sshmon снова.", cfgPath)
 }

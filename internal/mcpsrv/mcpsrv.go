@@ -7,10 +7,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
+	"github.com/kibomibo/sshmon/internal/buildinfo"
 	"github.com/kibomibo/sshmon/internal/collect"
 )
+
+// protocolVersion — версия MCP по умолчанию, если клиент её не прислал.
+const protocolVersion = "2025-03-26"
+
+// collector — то, что MCP-серверу нужно от сборщика метрик. Интерфейс
+// (а не *collect.Collector) делает loop/handle/callTool тестируемыми без SSH.
+type collector interface {
+	Snapshot() collect.Snapshot
+	TailLog(server string, lines int) (string, error)
+}
 
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -31,9 +43,9 @@ type response struct {
 	Error   *rpcError       `json:"error,omitempty"`
 }
 
-func Serve(ctx context.Context, col *collect.Collector) error {
+func Serve(ctx context.Context, col collector) error {
 	done := make(chan error, 1)
-	go func() { done <- loop(col) }()
+	go func() { done <- loop(os.Stdin, os.Stdout, col) }()
 	select {
 	case <-ctx.Done():
 		return nil
@@ -42,10 +54,10 @@ func Serve(ctx context.Context, col *collect.Collector) error {
 	}
 }
 
-func loop(col *collect.Collector) error {
-	in := bufio.NewScanner(os.Stdin)
+func loop(r io.Reader, w io.Writer, col collector) error {
+	in := bufio.NewScanner(r)
 	in.Buffer(make([]byte, 1024*1024), 1024*1024)
-	out := json.NewEncoder(os.Stdout)
+	out := json.NewEncoder(w)
 	for in.Scan() {
 		line := in.Text()
 		if line == "" {
@@ -53,6 +65,15 @@ func loop(col *collect.Collector) error {
 		}
 		var req request
 		if err := json.Unmarshal([]byte(line), &req); err != nil {
+			// Битый JSON: id неизвестен → отвечаем parse error с id=null,
+			// чтобы клиент не гадал, почему sshmon "молчит".
+			if encErr := out.Encode(response{
+				JSONRPC: "2.0",
+				ID:      json.RawMessage("null"),
+				Error:   &rpcError{Code: -32700, Message: "parse error: " + err.Error()},
+			}); encErr != nil {
+				return encErr
+			}
 			continue
 		}
 		if req.ID == nil {
@@ -65,21 +86,21 @@ func loop(col *collect.Collector) error {
 	return in.Err()
 }
 
-func handle(col *collect.Collector, req *request) response {
+func handle(col collector, req *request) response {
 	resp := response{JSONRPC: "2.0", ID: req.ID}
 	switch req.Method {
 	case "initialize":
 		var p struct {
 			ProtocolVersion string `json:"protocolVersion"`
 		}
-		_ = json.Unmarshal(req.Params, &p)
+		_ = json.Unmarshal(req.Params, &p) // params опциональны; при ошибке берём дефолт
 		if p.ProtocolVersion == "" {
-			p.ProtocolVersion = "2025-03-26"
+			p.ProtocolVersion = protocolVersion
 		}
 		resp.Result = map[string]any{
 			"protocolVersion": p.ProtocolVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "sshmon", "version": "0.3.0"},
+			"serverInfo":      map[string]any{"name": "sshmon", "version": buildinfo.Version},
 		}
 	case "ping":
 		resp.Result = map[string]any{}
@@ -126,7 +147,7 @@ var toolList = []map[string]any{
 	},
 }
 
-func callTool(col *collect.Collector, params json.RawMessage) map[string]any {
+func callTool(col collector, params json.RawMessage) map[string]any {
 	var p struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -139,7 +160,9 @@ func callTool(col *collect.Collector, params json.RawMessage) map[string]any {
 		Lines  int    `json:"lines"`
 	}
 	if len(p.Arguments) > 0 {
-		_ = json.Unmarshal(p.Arguments, &args)
+		if err := json.Unmarshal(p.Arguments, &args); err != nil {
+			return textResult("bad arguments: "+err.Error(), true)
+		}
 	}
 	snap := col.Snapshot()
 	switch p.Name {

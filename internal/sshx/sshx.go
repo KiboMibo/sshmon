@@ -206,8 +206,8 @@ func authMethods(cfg config.Server, passphrase []byte) ([]ssh.AuthMethod, bool, 
 			}
 		}
 	}
-	if cfg.Password != "" {
-		out = append(out, ssh.Password(cfg.Password))
+	if pw := cfg.Pass(); pw != "" {
+		out = append(out, ssh.Password(pw))
 	}
 	return out, needsPassphrase, cleanup, nil
 }
@@ -281,15 +281,29 @@ func FriendlyErr(err error) string {
 	return msg
 }
 
-func hostKeyCallback(cfg config.Server) ssh.HostKeyCallback {
+// Второй результат = true только когда проверка снята молча (known_hosts нет),
+// но НЕ при явном insecure_host_key — вызывающий предупреждает лишь в этом случае.
+func hostKeyVerification(cfg config.Server, knownHostsPath string) (ssh.HostKeyCallback, bool) {
 	if cfg.InsecureHostKey {
-		return ssh.InsecureIgnoreHostKey() // явный opt-in в конфиге
+		return ssh.InsecureIgnoreHostKey(), false // явный opt-in в конфиге
 	}
-	home, _ := os.UserHomeDir()
-	if cb, err := knownhosts.New(home + "/.ssh/known_hosts"); err == nil {
-		return cb
+	if cb, err := knownhosts.New(knownHostsPath); err == nil {
+		return cb, false
 	}
 	// ponytail: нет known_hosts — принимаем любой ключ, иначе утилита не стартует;
 	// апгрейд: TOFU с записью ключа в свой файл
-	return ssh.InsecureIgnoreHostKey()
+	return ssh.InsecureIgnoreHostKey(), true
+}
+
+var insecureHostKeyWarn sync.Once
+
+func hostKeyCallback(cfg config.Server) ssh.HostKeyCallback {
+	home, _ := os.UserHomeDir()
+	cb, silentInsecure := hostKeyVerification(cfg, home+"/.ssh/known_hosts")
+	if silentInsecure {
+		insecureHostKeyWarn.Do(func() {
+			fmt.Fprintln(os.Stderr, "sshmon: ~/.ssh/known_hosts не найден — host-key не проверяется (риск MITM); создайте файл или задайте insecure_host_key: true осознанно")
+		})
+	}
+	return cb
 }

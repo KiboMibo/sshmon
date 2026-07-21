@@ -19,11 +19,22 @@ type Server struct {
 	User            string `yaml:"user"`
 	Key             string `yaml:"key,omitempty"`
 	Password        string `yaml:"password,omitempty"`
+	PasswordEnv     string `yaml:"password_env,omitempty"`
 	InsecureHostKey bool   `yaml:"insecure_host_key,omitempty"`
 	Group           string `yaml:"group,omitempty"`
 }
 
 func (s Server) Addr() string { return fmt.Sprintf("%s:%d", s.Host, s.Port) }
+
+func (s Server) Pass() string {
+	if s.Password != "" {
+		return s.Password
+	}
+	if s.PasswordEnv != "" {
+		return os.Getenv(s.PasswordEnv)
+	}
+	return ""
+}
 
 type LLM struct {
 	Provider  string `yaml:"provider"` // openai | anthropic | любой OpenAI-совместимый
@@ -148,6 +159,36 @@ func Load(path string) (*Config, error) {
 		}
 	}
 	return &c, nil
+}
+
+// SecretPermWarning возвращает предупреждение, если файл конфига доступен
+// группе/остальным (mode & 0o077 != 0) И содержит секрет в открытом виде
+// (пароль сервера или api_key LLM). Иначе — "". Чистая функция, тестируема.
+func SecretPermWarning(path string, cfg *Config) string {
+	if cfg == nil || !hasPlaintextSecret(cfg) {
+		return ""
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	perm := info.Mode().Perm()
+	if perm&0o077 == 0 {
+		return ""
+	}
+	return fmt.Sprintf("sshmon: %s содержит секрет и доступен для чтения другим (%#o) — chmod 600 %s", path, perm, path)
+}
+
+func hasPlaintextSecret(cfg *Config) bool {
+	if cfg.LLM.APIKey != "" {
+		return true
+	}
+	for _, s := range cfg.Servers {
+		if s.Password != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func expandHome(p string) string {

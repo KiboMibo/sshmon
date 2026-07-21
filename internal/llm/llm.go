@@ -14,6 +14,13 @@ import (
 	"github.com/kibomibo/sshmon/internal/config"
 )
 
+const (
+	requestTimeout     = 2 * time.Minute // весь round-trip чата, включая генерацию
+	maxResponseBytes   = 1 << 20         // 1 MiB: защита от неограниченного ответа враждебного апстрима
+	anthropicMaxTokens = 2048            // потолок ответа Anthropic (у OpenAI-совместимых берётся дефолт модели)
+	errSnippetLen      = 500             // сколько символов тела показывать в ошибке не-200
+)
+
 type Message struct {
 	Role    string `json:"role"` // user | assistant
 	Content string `json:"content"`
@@ -25,7 +32,7 @@ type Client struct {
 }
 
 func New(cfg config.LLM) *Client {
-	return &Client{cfg: cfg, hc: &http.Client{Timeout: 2 * time.Minute}}
+	return &Client{cfg: cfg, hc: &http.Client{Timeout: requestTimeout}}
 }
 
 func (c *Client) Configured() bool { return c.cfg.Model != "" }
@@ -58,14 +65,14 @@ func (c *Client) post(ctx context.Context, url string, hdr map[string]string, bo
 		return nil, err
 	}
 	defer resp.Body.Close()
-	rb, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	rb, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		s := string(rb)
-		if len(s) > 500 {
-			s = s[:500]
+		if len(s) > errSnippetLen {
+			s = s[:errSnippetLen]
 		}
 		return nil, fmt.Errorf("llm http %d: %s", resp.StatusCode, s)
 	}
@@ -112,7 +119,7 @@ func (c *Client) anthropic(ctx context.Context, system string, msgs []Message) (
 		"anthropic-version": "2023-06-01",
 	}
 	rb, err := c.post(ctx, url, hdr, map[string]any{
-		"model": c.cfg.Model, "max_tokens": 2048, "system": system, "messages": msgs,
+		"model": c.cfg.Model, "max_tokens": anthropicMaxTokens, "system": system, "messages": msgs,
 	})
 	if err != nil {
 		return "", err
