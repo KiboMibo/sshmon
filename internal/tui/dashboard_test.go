@@ -88,15 +88,15 @@ func TestDashboardOfflineShowsReconnectHint(t *testing.T) {
 		screen: screenDashboard,
 		snapshot: collect.Snapshot{Time: now, Servers: []collect.Metrics{{
 			Name: "db", Hostname: "db-01", Online: false, Err: "dial timeout", Time: now.Add(-time.Minute),
-		}}},
+		}}, Issues: []collect.Issue{{Server: "db", Severity: "crit", Msg: "недоступен: dial timeout"}}},
 	}
 
 	// When: the dashboard is rendered.
 	m.layout = newLayout(100, 24)
 	view := m.View()
 
-	// Then: a prominent reconnect hint is visible.
-	if !strings.Contains(view, "нажмите r") {
+	// Then: the ПРОБЛЕМЫ panel carries a reconnect hint.
+	if !strings.Contains(view, "переподключить") {
 		t.Fatalf("offline dashboard misses reconnect hint:\n%s", view)
 	}
 }
@@ -109,7 +109,7 @@ func TestDashboardRetainsLastMetricsWhenServerIsOfflineOrStale(t *testing.T) {
 		snapshot: collect.Snapshot{Time: now, Servers: []collect.Metrics{{
 			Name: "db", Hostname: "db-01", Online: false, Err: "dial timeout", Time: now.Add(-2 * time.Minute),
 			CPUPct: 38, MemPct: 55, Load1: 0.7,
-		}}},
+		}}, Issues: []collect.Issue{{Server: "db", Severity: "crit", Msg: "недоступен: dial timeout"}}},
 	}
 
 	// When: the dashboard is rendered and an unrelated history sink is unavailable.

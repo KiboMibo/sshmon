@@ -17,15 +17,9 @@ func (m Model) renderDashboardWorkspace() string {
 		titleStyle.Render("sshmon · " + server.Name),
 		m.dashboardStatus(server),
 	}
-	if server.Err != "" {
-		lines = append(lines, panelBox("ОШИБКА SSH", "r переподключить", m.layout.width, wrapWords(server.Err, m.layout.width-4))...)
-	}
-	if !server.Online && server.Err != "" {
-		lines = append(lines, criticalStyle.Render("сервер недоступен — нажмите r для переподключения"))
-	}
 	if len(issuesForServer(m.snapshot.Issues, server.Name)) > 0 {
 		if m.layout.wide {
-			lines = append(lines, panelBox("ПРОБЛЕМЫ", "r переподключить", m.layout.width, []string{m.dashboardIssues(server.Name)})...)
+			lines = append(lines, panelBox("ПРОБЛЕМЫ", "r переподключить", m.layout.width, wrapWords(m.dashboardIssueText(server.Name), m.layout.width-4))...)
 		} else {
 			lines = append(lines, dimStyle.Render("ПРОБЛЕМЫ: "+m.dashboardIssues(server.Name)))
 		}

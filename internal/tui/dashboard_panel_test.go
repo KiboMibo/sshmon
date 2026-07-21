@@ -58,21 +58,28 @@ func TestWrapWordsBreaksLongTextToFitWidth(t *testing.T) {
 	}
 }
 
-func TestDashboardErrorRendersAsBorderedParagraphWithoutTruncation(t *testing.T) {
-	// Given: сервер с длинной ошибкой SSH, которая раньше обрезалась через fitLine.
+func TestDashboardProblemsPanelWrapsFullIssueWithoutTruncation(t *testing.T) {
+	// Given: сервер с длинной проблемой, которая раньше обрезалась через fitLine.
 	m := dashboardWorkspaceFixture()
 	m.layout = newLayout(120, 30)
 	server := m.snapshot.Servers[0]
 	server.Online = false
-	server.Err = "host-key сервера не совпадает с записью в known_hosts — выполните ssh-keygen -R и переподключитесь"
 	m.snapshot.Servers[0] = server
+	m.snapshot.Issues = []collect.Issue{{
+		Server:   server.Name,
+		Severity: "crit",
+		Msg:      "недоступен: host-key сервера не совпадает с записью в known_hosts — выполните ssh-keygen -R и переподключитесь",
+	}}
 
 	// When: Dashboard рендерится.
 	view := m.View()
 
-	// Then: полный хвост ошибки виден (без обрезки) — значит, текст перенёсся, а не обрезался.
+	// Then: полный хвост проблемы виден в единственной панели ПРОБЛЕМЫ — без обрезки и без дубля ОШИБКА SSH.
 	if !strings.Contains(view, "переподключитесь") {
-		t.Fatalf("error text was truncated, view:\n%s", view)
+		t.Fatalf("issue text was truncated, view:\n%s", view)
+	}
+	if strings.Contains(view, "ОШИБКА SSH") {
+		t.Fatalf("duplicate ОШИБКА SSH panel still present, view:\n%s", view)
 	}
 }
 

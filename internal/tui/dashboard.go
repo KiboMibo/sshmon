@@ -71,6 +71,15 @@ func (m Model) dashboardIssues(name string) string {
 	return fitLine(strings.Join(parts, " · "), max(20, m.layout.width-12))
 }
 
+func (m Model) dashboardIssueText(name string) string {
+	issues := issuesForServer(m.snapshot.Issues, name)
+	parts := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		parts = append(parts, fmt.Sprintf("[%s] %s", issue.Severity, issue.Msg))
+	}
+	return strings.Join(parts, " · ")
+}
+
 func deviceTables(server collect.Metrics, layout layoutState) []string {
 	net := netTable(server)
 	disks := diskTable(server)
