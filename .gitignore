@@ -1,2 +1,4 @@
 /sshmon
 /.worktrees/
+.opencode/
+.omo/
