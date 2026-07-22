@@ -18,12 +18,9 @@ const (
 )
 
 type processScreen struct {
-	items      []collect.Process
-	sort       processSort
-	status     diagnosticsStatus
-	err        error
-	generation uint64
-	cancel     func()
+	items []collect.Process
+	sort  processSort
+	diagnostics
 }
 
 func sortProcesses(items []collect.Process, by processSort) []collect.Process {
@@ -57,30 +54,18 @@ func (s *processScreen) apply(items []collect.Process, err error) {
 	if err == nil {
 		s.items = append([]collect.Process(nil), items...)
 	}
-	s.err = err
-	s.status = diagnosticsResultStatus(err, len(s.items) > 0)
+	s.finish(err, len(s.items) > 0)
 }
 
-func (m Model) renderProcesses() string {
+var _ screen = processScreen{}
+
+func (s processScreen) view(ctx screenContext) string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("sshmon · "+m.selectedName()+" · Процессы") + "\n\n")
+	b.WriteString(titleStyle.Render("sshmon · "+ctx.serverName+" · Процессы") + "\n\n")
 	b.WriteString("PID     CPU     MEM     КОМАНДА\n")
-	for _, p := range sortProcesses(m.processes.items, m.processes.sort) {
+	for _, p := range sortProcesses(s.items, s.sort) {
 		b.WriteString(fmt.Sprintf("%-7d %6.1f%% %6.1f%%  %s\n", p.PID, p.CPUPct, p.MemPct, p.Command))
 	}
-	b.WriteString("\n" + dimStyle.Render(diagnosticsFooter(m.processes.status, m.processes.err)))
+	b.WriteString("\n" + dimStyle.Render(diagnosticsFooter(s.status, s.err)))
 	return b.String()
-}
-
-func (m Model) diagnosticsGeneration(screen screenKind) uint64 {
-	switch screen {
-	case screenProcesses:
-		return m.processes.generation
-	case screenPorts:
-		return m.ports.generation
-	case screenContainers:
-		return m.containers.generation
-	default:
-		return 0
-	}
 }

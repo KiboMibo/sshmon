@@ -26,7 +26,7 @@ func TestRenderPortsShowsProcessAndPID(t *testing.T) {
 	m.ports.items = []collect.Port{{Proto: "tcp", Local: "0.0.0.0:22", Process: "sshd", PID: 100}}
 
 	// When rendered.
-	view := m.renderPorts()
+	view := m.ports.view(m.screenContext())
 
 	// Then protocol, local address, process and PID are visible.
 	for _, want := range []string{"PROTO", "LOCAL", "ПРОЦЕСС", "PID", "sshd", "100"} {

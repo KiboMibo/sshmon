@@ -26,7 +26,7 @@ func TestRenderContainersIsObservationOnly(t *testing.T) {
 	m.containers.items = []collect.Container{{Name: "api", Image: "app:v2", Status: "Up 2h", CPUPct: 4, MemPct: 12}}
 
 	// When rendered.
-	view := m.renderContainers()
+	view := m.containers.view(m.screenContext())
 
 	// Then state and resource columns are present and no mutation hint exists.
 	for _, want := range []string{"ИМЯ", "ОБРАЗ", "СТАТУС", "CPU", "MEM", "api", "Up 2h"} {

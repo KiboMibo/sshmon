@@ -30,7 +30,7 @@ func TestChatRequestContainsFleetSelectionScreenAndSubfeatureState(t *testing.T)
 		screen:     screenProcesses,
 		selected:   0,
 		snapshot:   collect.Snapshot{Servers: []collect.Metrics{{Name: "web", Online: true}}},
-		processes:  processScreen{status: diagnosticsStale, err: context.DeadlineExceeded},
+		processes:  processScreen{diagnostics: diagnostics{status: diagnosticsStale, err: context.DeadlineExceeded}},
 		chatClient: client,
 		chat:       newChatOverlay(),
 		overlay:    overlayChat,

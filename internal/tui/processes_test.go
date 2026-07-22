@@ -29,7 +29,7 @@ func TestRenderProcessesShowsReadOnlyColumns(t *testing.T) {
 	m.processes.items = []collect.Process{{PID: 42, Command: "nginx -g daemon off", CPUPct: 7.5, MemPct: 2.5}}
 
 	// When rendered.
-	view := m.renderProcesses()
+	view := m.processes.view(m.screenContext())
 
 	// Then PID, command, CPU and memory are visible without mutation controls.
 	for _, want := range []string{"PID", "КОМАНДА", "CPU", "MEM", "42", "nginx"} {

@@ -109,8 +109,8 @@ func statusContext(status diagnosticsStatus, err error) string {
 	return text
 }
 
-func screenLabel(screen screenKind) string {
-	return [...]string{"Fleet", "Dashboard", "Processes", "Ports", "History", "Logs", "Containers"}[screen]
+func screenLabel(kind screenKind) string {
+	return [...]string{"Fleet", "Dashboard", "Processes", "Ports", "History", "Logs", "Containers"}[kind]
 }
 
 func (m Model) renderChat() string {

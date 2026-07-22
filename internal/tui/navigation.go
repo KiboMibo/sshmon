@@ -152,8 +152,8 @@ func dashboardDestination(key string) screenKind {
 	}
 }
 
-func isDeepScreen(screen screenKind) bool {
-	return screen >= screenProcesses && screen <= screenContainers
+func isDeepScreen(kind screenKind) bool {
+	return kind >= screenProcesses && kind <= screenContainers
 }
 
 func overlayTitle(overlay overlayKind) string {

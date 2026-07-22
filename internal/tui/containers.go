@@ -17,12 +17,9 @@ const (
 )
 
 type containerScreen struct {
-	items      []collect.Container
-	sort       containerSort
-	status     diagnosticsStatus
-	err        error
-	generation uint64
-	cancel     func()
+	items []collect.Container
+	sort  containerSort
+	diagnostics
 }
 
 func sortContainers(items []collect.Container, by containerSort) []collect.Container {
@@ -52,17 +49,18 @@ func (s *containerScreen) apply(items []collect.Container, err error) {
 	if err == nil {
 		s.items = append([]collect.Container(nil), items...)
 	}
-	s.err = err
-	s.status = diagnosticsResultStatus(err, len(s.items) > 0)
+	s.finish(err, len(s.items) > 0)
 }
 
-func (m Model) renderContainers() string {
+var _ screen = containerScreen{}
+
+func (s containerScreen) view(ctx screenContext) string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("sshmon · "+m.selectedName()+" · Docker") + "\n\n")
+	b.WriteString(titleStyle.Render("sshmon · "+ctx.serverName+" · Docker") + "\n\n")
 	b.WriteString("ИМЯ             ОБРАЗ                  СТАТУС             CPU     MEM\n")
-	for _, c := range sortContainers(m.containers.items, m.containers.sort) {
+	for _, c := range sortContainers(s.items, s.sort) {
 		b.WriteString(fmt.Sprintf("%-16s %-22s %-18s %6.1f%% %6.1f%%\n", c.Name, c.Image, c.Status, c.CPUPct, c.MemPct))
 	}
-	b.WriteString("\n" + dimStyle.Render(diagnosticsFooter(m.containers.status, m.containers.err)))
+	b.WriteString("\n" + dimStyle.Render(diagnosticsFooter(s.status, s.err)))
 	return b.String()
 }

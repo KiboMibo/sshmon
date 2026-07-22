@@ -121,9 +121,9 @@ func (m *Model) handleOverlayKey(key tea.KeyMsg) (tea.Cmd, bool) {
 	}
 }
 
-func helpText(screen screenKind) string {
+func helpText(kind screenKind) string {
 	common := "c чат · : команды · ? справка · esc назад"
-	switch screen {
+	switch kind {
 	case screenFleet:
 		return "j/k выбор · enter открыть · / поиск · g группа · ! проблемы · v превью · " + common
 	case screenDashboard:

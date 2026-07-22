@@ -21,6 +21,18 @@ const (
 	diagnosticsError
 )
 
+type diagnostics struct {
+	status     diagnosticsStatus
+	err        error
+	generation uint64
+	cancel     func()
+}
+
+func (d *diagnostics) finish(err error, hasData bool) {
+	d.err = err
+	d.status = diagnosticsResultStatus(err, hasData)
+}
+
 type processesResultMsg struct {
 	generation uint64
 	items      []collect.Process
@@ -44,8 +56,8 @@ type diagnosticsTickMsg struct {
 	generation uint64
 }
 
-func diagnosticsCadence(screen screenKind) time.Duration {
-	switch screen {
+func diagnosticsCadence(kind screenKind) time.Duration {
+	switch kind {
 	case screenProcesses:
 		return 2 * time.Second
 	case screenPorts, screenContainers:
@@ -55,55 +67,57 @@ func diagnosticsCadence(screen screenKind) time.Duration {
 	}
 }
 
+func (m *Model) diagnosticsFor(kind screenKind) *diagnostics {
+	switch kind {
+	case screenProcesses:
+		return &m.processes.diagnostics
+	case screenPorts:
+		return &m.ports.diagnostics
+	case screenContainers:
+		return &m.containers.diagnostics
+	default:
+		return nil
+	}
+}
+
+func (m Model) diagnosticsGeneration(kind screenKind) uint64 {
+	if d := m.diagnosticsFor(kind); d != nil {
+		return d.generation
+	}
+	return 0
+}
+
 func (m *Model) startDiagnostics() tea.Cmd {
 	m.cancelDiagnostics()
 	m.request++
 	generation := m.request
-	ctx, cancel := context.WithCancel(context.Background())
-	server := m.selectedName()
-	switch m.screen {
-	case screenProcesses:
-		m.processes.generation, m.processes.cancel, m.processes.status = generation, cancel, diagnosticsLoading
-	case screenPorts:
-		m.ports.generation, m.ports.cancel, m.ports.status = generation, cancel, diagnosticsLoading
-	case screenContainers:
-		m.containers.generation, m.containers.cancel, m.containers.status = generation, cancel, diagnosticsLoading
-	default:
-		cancel()
+	d := m.diagnosticsFor(m.screen)
+	if d == nil {
 		return nil
 	}
-	return runDiagnostics(ctx, generation, m.screen, server, m.collector)
+	ctx, cancel := context.WithCancel(context.Background())
+	d.generation, d.cancel, d.status = generation, cancel, diagnosticsLoading
+	return runDiagnostics(ctx, generation, m.screen, m.selectedName(), m.collector)
 }
 
 func (m *Model) cancelDiagnostics() {
-	switch m.screen {
-	case screenProcesses:
-		if m.processes.cancel != nil {
-			m.processes.cancel()
-			m.processes.cancel = nil
-		}
-	case screenPorts:
-		if m.ports.cancel != nil {
-			m.ports.cancel()
-			m.ports.cancel = nil
-		}
-	case screenContainers:
-		if m.containers.cancel != nil {
-			m.containers.cancel()
-			m.containers.cancel = nil
-		}
+	d := m.diagnosticsFor(m.screen)
+	if d == nil || d.cancel == nil {
+		return
 	}
+	d.cancel()
+	d.cancel = nil
 }
 
-func runDiagnostics(ctx context.Context, generation uint64, screen screenKind, server string, collector *collect.Collector) tea.Cmd {
+func runDiagnostics(ctx context.Context, generation uint64, kind screenKind, server string, collector *collect.Collector) tea.Cmd {
 	return func() tea.Msg {
 		if err := ctx.Err(); err != nil {
-			return diagnosticsResult(screen, generation, err)
+			return diagnosticsResult(kind, generation, err)
 		}
 		if collector == nil {
-			return diagnosticsResult(screen, generation, errors.New("коллектор недоступен"))
+			return diagnosticsResult(kind, generation, errors.New("коллектор недоступен"))
 		}
-		switch screen {
+		switch kind {
 		case screenProcesses:
 			items, err := collector.Processes(ctx, server)
 			return processesResultMsg{generation: generation, items: items, err: err}
@@ -114,13 +128,13 @@ func runDiagnostics(ctx context.Context, generation uint64, screen screenKind, s
 			items, err := collector.Containers(ctx, server)
 			return containersResultMsg{generation: generation, items: items, err: err}
 		default:
-			return diagnosticsResult(screen, generation, collect.ErrUnsupported)
+			return diagnosticsResult(kind, generation, collect.ErrUnsupported)
 		}
 	}
 }
 
-func diagnosticsResult(screen screenKind, generation uint64, err error) tea.Msg {
-	switch screen {
+func diagnosticsResult(kind screenKind, generation uint64, err error) tea.Msg {
+	switch kind {
 	case screenProcesses:
 		return processesResultMsg{generation: generation, err: err}
 	case screenPorts:
@@ -130,13 +144,13 @@ func diagnosticsResult(screen screenKind, generation uint64, err error) tea.Msg 
 	}
 }
 
-func scheduleDiagnostics(screen screenKind, generation uint64) tea.Cmd {
-	delay := diagnosticsCadence(screen)
+func scheduleDiagnostics(kind screenKind, generation uint64) tea.Cmd {
+	delay := diagnosticsCadence(kind)
 	if delay == 0 {
 		return nil
 	}
 	return tea.Tick(delay, func(time.Time) tea.Msg {
-		return diagnosticsTickMsg{screen: screen, generation: generation}
+		return diagnosticsTickMsg{screen: kind, generation: generation}
 	})
 }
 

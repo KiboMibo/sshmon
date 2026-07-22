@@ -177,15 +177,15 @@ func (m Model) renderScreen() string {
 	case screenDashboard:
 		return m.renderDashboard()
 	case screenProcesses:
-		return m.renderProcesses()
+		return m.processes.view(m.screenContext())
 	case screenPorts:
-		return m.renderPorts()
+		return m.ports.view(m.screenContext())
 	case screenHistory:
 		return m.renderHistory()
 	case screenLogs:
 		return m.renderLogs()
 	case screenContainers:
-		return m.renderContainers()
+		return m.containers.view(m.screenContext())
 	default:
 		return "sshmon"
 	}

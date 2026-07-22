@@ -17,12 +17,9 @@ const (
 )
 
 type portScreen struct {
-	items      []collect.Port
-	sort       portSort
-	status     diagnosticsStatus
-	err        error
-	generation uint64
-	cancel     func()
+	items []collect.Port
+	sort  portSort
+	diagnostics
 }
 
 func sortPorts(items []collect.Port, by portSort) []collect.Port {
@@ -61,17 +58,18 @@ func (s *portScreen) apply(items []collect.Port, err error) {
 	if err == nil {
 		s.items = append([]collect.Port(nil), items...)
 	}
-	s.err = err
-	s.status = diagnosticsResultStatus(err, len(s.items) > 0)
+	s.finish(err, len(s.items) > 0)
 }
 
-func (m Model) renderPorts() string {
+var _ screen = portScreen{}
+
+func (s portScreen) view(ctx screenContext) string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("sshmon · "+m.selectedName()+" · Порты") + "\n\n")
+	b.WriteString(titleStyle.Render("sshmon · "+ctx.serverName+" · Порты") + "\n\n")
 	b.WriteString("PROTO   LOCAL                         ПРОЦЕСС             PID\n")
-	for _, p := range sortPorts(m.ports.items, m.ports.sort) {
+	for _, p := range sortPorts(s.items, s.sort) {
 		b.WriteString(fmt.Sprintf("%-7s %-29s %-19s %d\n", p.Proto, p.Local, p.Process, p.PID))
 	}
-	b.WriteString("\n" + dimStyle.Render(diagnosticsFooter(m.ports.status, m.ports.err)))
+	b.WriteString("\n" + dimStyle.Render(diagnosticsFooter(s.status, s.err)))
 	return b.String()
 }
