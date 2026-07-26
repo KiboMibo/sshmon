@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: version matches tag
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          got="$(go run ./cmd/sshmon --version | awk '{print $2}')"
+          test "$want" = "$got" || { echo "buildinfo $got != tag $want"; exit 1; }
+      - name: build
+        run: |
+          mkdir dist
+          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
+            os="${target%/*}"; arch="${target#*/}"
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -o sshmon ./cmd/sshmon
+            tar czf "dist/sshmon_${GITHUB_REF_NAME}_${os}_${arch}.tar.gz" sshmon
+          done
+          rm sshmon
+      - name: upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            && gh release upload "$GITHUB_REF_NAME" dist/* --clobber \
+            || gh release create "$GITHUB_REF_NAME" dist/* --generate-notes
+      - name: formula checksums
+        run: |
+          {
+            echo "## Formula/sshmon.rb"
+            echo '```'
+            echo "version \"${GITHUB_REF_NAME#v}\""
+            (cd dist && sha256sum *)
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
