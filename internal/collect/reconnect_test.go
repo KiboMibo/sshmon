@@ -1,6 +1,7 @@
 package collect
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -19,7 +20,7 @@ type fakePollRunner struct {
 	passphrase []byte
 }
 
-func (f *fakePollRunner) Run(string, time.Duration) (string, error) {
+func (f *fakePollRunner) RunContext(context.Context, string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.output, f.err

@@ -11,7 +11,7 @@ import (
 )
 
 type pollRunner interface {
-	Run(string, time.Duration) (string, error)
+	RunContext(context.Context, string) (string, error)
 	Reset()
 	SetPassphrase([]byte)
 }
@@ -66,7 +66,10 @@ func (c *Collector) RunWithSink(ctx context.Context, sink func(context.Context, 
 }
 
 func (c *Collector) pollAndPublish(ctx context.Context, sink func(context.Context, Snapshot) error) {
-	c.pollAll()
+	c.pollAll(ctx)
+	if ctx.Err() != nil {
+		return
+	}
 	snapshot := c.Snapshot()
 	if sink != nil {
 		err := sink(ctx, snapshot)
@@ -82,25 +85,27 @@ func (c *Collector) pollAndPublish(ctx context.Context, sink func(context.Contex
 	c.publish(Event{Snapshot: snapshot})
 }
 
-func (c *Collector) pollAll() {
+func (c *Collector) pollAll(ctx context.Context) {
 	var wg sync.WaitGroup
 	for _, st := range c.states {
 		wg.Add(1)
 		go func(st *serverState) {
 			defer wg.Done()
-			c.poll(st)
+			c.poll(ctx, st)
 		}(st)
 	}
 	wg.Wait()
 }
 
-func (c *Collector) poll(st *serverState) error {
+func (c *Collector) poll(ctx context.Context, st *serverState) error {
 	now := time.Now()
-	raw, err := st.runner.Run(sampleCmd, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	raw, err := st.runner.RunContext(ctx, sampleCmd)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err != nil {
-		st.m = Metrics{Name: st.cfg.Name, Group: st.cfg.Group, Time: now, Online: false, Err: sshx.FriendlyErr(err)}
+		st.m = Metrics{Name: st.cfg.Name, Group: st.cfg.Group, Time: now, Online: false, Err: sshx.FriendlyErr(err, st.cfg)}
 		st.prev = nil
 		return err
 	}
@@ -132,7 +137,7 @@ func (c *Collector) Reconnect(server string) error {
 		return err
 	}
 	state.runner.Reset()
-	err = c.poll(state)
+	err = c.poll(context.Background(), state)
 	c.publish(Event{Snapshot: c.Snapshot()})
 	return err
 }

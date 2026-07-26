@@ -14,7 +14,7 @@ type Stream struct {
 }
 
 func (c *Client) StreamContext(ctx context.Context, cmd string) (Stream, error) {
-	client, err := c.conn()
+	client, err := c.conn(ctx)
 	if err != nil {
 		return Stream{}, err
 	}

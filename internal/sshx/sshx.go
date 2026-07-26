@@ -4,10 +4,12 @@ package sshx
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -33,7 +35,7 @@ type Client struct {
 
 func New(cfg config.Server) *Client { return &Client{cfg: cfg} }
 
-func (c *Client) conn() (*ssh.Client, error) {
+func (c *Client) conn(ctx context.Context) (*ssh.Client, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.c != nil {
@@ -50,11 +52,14 @@ func (c *Client) conn() (*ssh.Client, error) {
 		}
 		return nil, fmt.Errorf("нет способа аутентификации (key/agent/password)")
 	}
-	cl, err := ssh.Dial("tcp", c.cfg.Addr(), &ssh.ClientConfig{
-		User:            c.cfg.User,
-		Auth:            auth,
-		HostKeyCallback: hostKeyCallback(c.cfg),
-		Timeout:         10 * time.Second,
+	checkHostKey := hostKeyCallback(c.cfg)
+	addr := c.cfg.Addr()
+	cl, err := dialContext(ctx, addr, &ssh.ClientConfig{
+		User:              c.cfg.User,
+		Auth:              auth,
+		HostKeyCallback:   checkHostKey,
+		HostKeyAlgorithms: hostKeyAlgorithms(checkHostKey, addr),
+		Timeout:           10 * time.Second,
 	})
 	if err != nil {
 		if needsPassphrase {
@@ -64,6 +69,27 @@ func (c *Client) conn() (*ssh.Client, error) {
 	}
 	c.c = cl
 	return cl, nil
+}
+
+// dialContext подключается с учётом отмены: ssh.Dial контекст игнорирует,
+// а рукопожатие блокирует до ответа сервера, поэтому TCP-соединение
+// закрывается извне — иначе выход из приложения ждёт таймаута.
+func dialContext(ctx context.Context, addr string, cfg *ssh.ClientConfig) (*ssh.Client, error) {
+	tcp, err := (&net.Dialer{Timeout: cfg.Timeout}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = tcp.Close() })
+	defer stop()
+	sc, chans, reqs, err := ssh.NewClientConn(tcp, addr, cfg)
+	if err != nil {
+		_ = tcp.Close()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, err
+	}
+	return ssh.NewClient(sc, chans, reqs), nil
 }
 
 // SetPassphrase replaces the in-memory key passphrase and resets the connection.
@@ -110,7 +136,7 @@ func (c *Client) Run(cmd string, timeout time.Duration) (string, error) {
 
 // RunContext выполняет команду до завершения или отмены контекста.
 func (c *Client) RunContext(ctx context.Context, cmd string) (string, error) {
-	cl, err := c.conn()
+	cl, err := c.conn(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -263,14 +289,18 @@ func publicKeyFromKeyFile(keyPath string, passphrase []byte) ssh.PublicKey {
 
 // FriendlyErr переводит сырые ошибки ssh.Dial/Run в человекочитаемые подсказки.
 // Не известные ошибки возвращаются как есть (err.Error()).
-func FriendlyErr(err error) string {
+func FriendlyErr(err error, srv config.Server) string {
 	if err == nil {
 		return ""
 	}
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "knownhosts: key mismatch"):
-		return "host-key сервера не совпадает с записью в ~/.ssh/known_hosts — выполните `ssh-keygen -R <host>` и переподключитесь обычным ssh, либо поставьте insecure_host_key: true в config.yaml"
+		return fmt.Sprintf("host-key сервера не совпадает с записью в ~/.ssh/known_hosts — сверьте отпечаток с тем, что показывает хостер; если сервер переустанавливали, выполните `ssh-keygen -R %s` и переподключитесь обычным ssh", knownHostsTarget(srv))
+	case strings.Contains(msg, "no common algorithm for host key"):
+		return fmt.Sprintf("сервер не предлагает host-key того типа, что записан в ~/.ssh/known_hosts — вероятно сервер переустанавливали; сверьте отпечаток и выполните `ssh-keygen -R %s`", knownHostsTarget(srv))
+	case strings.Contains(msg, "knownhosts: key is unknown"):
+		return "хост отсутствует в ~/.ssh/known_hosts — подключитесь к нему один раз обычным ssh, сверьте и подтвердите отпечаток, после этого sshmon увидит ключ"
 	case strings.Contains(msg, "unable to authenticate"):
 		return "не удалось аутентифицироваться — проверьте ключ/пароль и что ssh-agent загружен (ssh-add -l)"
 	case strings.Contains(msg, "connection refused"):
@@ -279,6 +309,17 @@ func FriendlyErr(err error) string {
 		return "сеть: таймаут подключения — хост недоступен или порт закрыт firewall"
 	}
 	return msg
+}
+
+func knownHostsTarget(srv config.Server) string {
+	switch {
+	case srv.Host == "":
+		return "<host>"
+	case srv.Port == 0 || srv.Port == 22:
+		return srv.Host
+	default:
+		return fmt.Sprintf("[%s]:%d", srv.Host, srv.Port)
+	}
 }
 
 // Второй результат = true только когда проверка снята молча (known_hosts нет),
@@ -306,4 +347,26 @@ func hostKeyCallback(cfg config.Server) ssh.HostKeyCallback {
 		})
 	}
 	return cb
+}
+
+// Без этого Go-клиент просит host-key своего любимого типа (ecdsa/rsa), а не тот,
+// что записан в known_hosts, и проверка падает с "key mismatch" на честном сервере.
+// Типы вытаскиваются из KeyError.Want: публичного API для этого в x/crypto нет,
+// поэтому callback зовётся заведомо чужим ключом. nil = ограничений нет.
+func hostKeyAlgorithms(cb ssh.HostKeyCallback, addr string) []string {
+	probe, err := ssh.NewPublicKey(ed25519.PublicKey(make([]byte, ed25519.PublicKeySize)))
+	if err != nil {
+		return nil
+	}
+	var keyErr *knownhosts.KeyError
+	if !errors.As(cb(addr, &net.TCPAddr{IP: net.IPv4zero}, probe), &keyErr) {
+		return nil
+	}
+	var out []string
+	for _, known := range keyErr.Want {
+		if typ := known.Key.Type(); !slices.Contains(out, typ) {
+			out = append(out, typ)
+		}
+	}
+	return out
 }
