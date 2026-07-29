@@ -45,7 +45,7 @@ func TestDashboardThreeRowWideLayoutShowsWorkspacePanels(t *testing.T) {
 	view := m.View()
 
 	// Then all workspace panels expose their operational data and controls.
-	for _, want := range []string{"CPU", "ДИСКИ / IO", "DOCKER", "api", "СЕТЬ", "SYSTEMD", "sshd.service", "ЛОГИ · SYSTEM", "system ready", "f фильтр", "x системный лог"} {
+	for _, want := range []string{"CPU", "ДИСКИ / IO", "DOCKER", "api", "СЕТЬ", "СЕРВИСЫ", "sshd.service", "ЛОГИ · SYSTEM", "system ready", "f фильтр", "x системный лог"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("wide dashboard missing %q:\n%s", want, view)
 		}

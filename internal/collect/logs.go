@@ -177,6 +177,15 @@ func (b *LogBuffer) SetFilter(filter string) {
 	b.mu.Unlock()
 }
 
+func (b *LogBuffer) Total() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if b.paused {
+		return len(b.frozen)
+	}
+	return len(b.lines)
+}
+
 func (b *LogBuffer) Visible() []string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()

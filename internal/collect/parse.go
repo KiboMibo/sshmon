@@ -17,7 +17,8 @@ const sampleCmd = `echo @@HOST; hostname 2>/dev/null; ` +
 	`echo @@DISK; cat /proc/diskstats; ` +
 	`echo @@NET; cat /proc/net/dev; ` +
 	`echo @@DF; df -kP 2>/dev/null; ` +
-	`echo @@PORTS; ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null`
+	`echo @@PORTS; ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null; ` +
+	`echo @@DOCKER; docker ps -a --format '{{.Status}}' 2>/dev/null`
 
 // counters — сырые счётчики одного сэмпла; скорости считаются по двум сэмплам.
 type counters struct {
@@ -44,6 +45,7 @@ type sample struct {
 	swapFree uint64
 	disks    []DiskUsage
 	ports    []Port
+	docker   DockerCounts
 }
 
 func sections(raw string) map[string][]string {
@@ -184,6 +186,11 @@ func parseSample(raw string, at time.Time) *sample {
 		})
 	}
 	s.ports, _ = ParsePorts(strings.Join(sec["PORTS"], "\n"))
+	for _, ln := range sec["DOCKER"] {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			s.docker.CountContainerStatus(ln)
+		}
+	}
 	return s
 }
 

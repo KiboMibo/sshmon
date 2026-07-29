@@ -30,6 +30,14 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if cmd, handled := m.handleOverlayKey(key); handled {
 		return m, cmd
 	}
+	if m.screen == screenFleet && m.fleet.searching {
+		return m, m.handleFleetSearchKey(key)
+	}
+	if m.screen == screenFleet && m.fleet.logbox {
+		if cmd, handled := m.handleFleetLogboxKey(key); handled {
+			return m, cmd
+		}
+	}
 	if m.screen == screenLogs {
 		if cmd, handled := m.handleLogsKey(key); handled {
 			return m, cmd
@@ -50,6 +58,9 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		return m, m.openOverlay(overlayChat)
 	case "/":
+		if m.screen == screenFleet {
+			return m, m.openFleetSearch()
+		}
 		return m, m.openOverlay(overlaySearch)
 	case ":":
 		return m, m.openOverlay(overlayPalette)
@@ -61,31 +72,43 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "up", "k":
 		if m.screen == screenFleet {
-			m.ensureFleet()
-			m.moveFleet(-1)
+			return m, m.moveFleetBy(-1)
 		}
 	case "down", "j":
 		if m.screen == screenFleet {
-			m.ensureFleet()
-			m.moveFleet(1)
+			return m, m.moveFleetBy(1)
 		}
 	case "pgup":
 		if m.screen == screenFleet {
-			m.ensureFleet()
-			m.moveFleet(-fleetPageSize)
+			return m, m.moveFleetBy(-fleetPageSize)
 		}
 	case "pgdown":
 		if m.screen == screenFleet {
-			m.ensureFleet()
-			m.moveFleet(fleetPageSize)
+			return m, m.moveFleetBy(fleetPageSize)
 		}
-	case "g":
+	case "right":
+		if m.screen == screenFleet && len(m.snapshot.Servers) > 0 {
+			m.ensureFleet()
+			m.fleet.expanded = true
+			return m, m.startFleetCardUnits()
+		}
+	case "left":
+		if m.screen == screenFleet {
+			m.fleet.expanded = false
+		}
+	case "g", "tab":
 		if m.screen == screenFleet {
 			m.ensureFleet()
 			m.fleet.filter.Group = cycleGroup(m.fleet.filter.Group, m.snapshot.Servers)
 			m.selectNearestVisible()
 		}
-	case "!":
+	case "a":
+		if m.screen == screenFleet {
+			m.ensureFleet()
+			m.fleet.filter.Group = ""
+			m.selectNearestVisible()
+		}
+	case "!", "f":
 		if m.screen == screenFleet {
 			m.ensureFleet()
 			m.fleet.filter.ProblemsOnly = !m.fleet.filter.ProblemsOnly
@@ -101,7 +124,21 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.screen = screenDashboard
 			return m, m.startDashboardWorkspace()
 		}
+	case "l":
+		if m.screen == screenFleet {
+			if m.fleet.expanded {
+				return m.openFromFleet(screenLogs)
+			}
+			return m, m.openFleetLogbox()
+		}
+	case "x":
+		if m.screen == screenFleet {
+			return m, m.startSSHSession()
+		}
 	case "p", "o", "d", "ctrl+h", "ctrl+l":
+		if m.screen == screenFleet && m.fleet.expanded && (value == "p" || value == "o" || value == "d") {
+			return m.openFromFleet(dashboardDestination(value))
+		}
 		if m.screen == screenDashboard {
 			m.screen = dashboardDestination(value)
 			if m.screen == screenProcesses || m.screen == screenPorts || m.screen == screenContainers {
@@ -125,6 +162,10 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if m.screen == screenDashboard {
 			m.cancelDashboardWorkspace()
 			m.screen = screenFleet
+		} else if m.screen == screenFleet {
+			m.ensureFleet()
+			m.fleet.filter = fleetFilter{}
+			m.selectNearestVisible()
 		}
 	case "q", "ctrl+c":
 		if m.screen == screenFleet {

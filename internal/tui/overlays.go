@@ -79,7 +79,7 @@ func (m Model) renderOverlay() string {
 	case overlayPalette:
 		content = m.renderPalette()
 	case overlayHelp:
-		content = "Справка\n\n" + helpText(m.screen) + "\n\nesc закрыть"
+		content = helpText(m.screen)
 	case overlayPassphrase:
 		content = m.renderPassphrase()
 	}
@@ -118,21 +118,5 @@ func (m *Model) handleOverlayKey(key tea.KeyMsg) (tea.Cmd, bool) {
 		return m.handlePassphraseKey(key), true
 	default:
 		return nil, true
-	}
-}
-
-func helpText(kind screenKind) string {
-	common := "c чат · : команды · ? справка · esc назад"
-	switch kind {
-	case screenFleet:
-		return "j/k выбор · enter открыть · / поиск · g группа · ! проблемы · v превью · " + common
-	case screenDashboard:
-		return "f фильтр юнитов · j/k выбор · enter journal · x системный лог · r переподключить · p процессы · o порты · ctrl+h история · ctrl+l логи · d Docker · " + common
-	case screenHistory:
-		return "1-5 диапазон · j/k метрика · h/l курсор · r обновить · " + common
-	case screenLogs:
-		return "space пауза · / фильтр · s источник · r переподключить · " + common
-	default:
-		return "только чтение · " + common
 	}
 }

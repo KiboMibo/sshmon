@@ -169,7 +169,7 @@ func TestDashboardMetricsContentReformFormat(t *testing.T) {
 
 // TestProblemsTopStripRenderedAbovePanelsInWideMode — Given a wide layout
 // and a server with problems, When renderDashboardWorkspace renders,
-// Then ПРОБЛЕМЫ strip appears BEFORE the МЕТРИКИ panel content.
+// Then ПРОБЛЕМЫ strip appears BEFORE the CPU metric row.
 func TestProblemsTopStripRenderedAbovePanelsInWideMode(t *testing.T) {
 	// Given: model with selected server, problems, wide layout
 	m := dashboardWorkspaceFixture()
@@ -180,17 +180,17 @@ func TestProblemsTopStripRenderedAbovePanelsInWideMode(t *testing.T) {
 	// When
 	view := m.View()
 
-	// Then: ПРОБЛЕМЫ appears before МЕТРИКИ panel
+	// Then: ПРОБЛЕМЫ appears before CPU panel
 	probIdx := strings.Index(view, "ПРОБЛЕМЫ")
-	metricsIdx := strings.Index(view, "МЕТРИКИ")
+	cpuIdx := strings.Index(view, "CPU")
 	if probIdx < 0 {
 		t.Fatal("expected ПРОБЛЕМЫ top strip in view")
 	}
-	if metricsIdx < 0 {
-		t.Fatal("expected МЕТРИКИ panel in view")
+	if cpuIdx < 0 {
+		t.Fatal("expected CPU metric row in view")
 	}
-	if probIdx > metricsIdx {
-		t.Errorf("expected ПРОБЛЕМЫ (%d) before МЕТРИКИ (%d)", probIdx, metricsIdx)
+	if probIdx > cpuIdx {
+		t.Errorf("expected ПРОБЛЕМЫ (%d) before CPU (%d)", probIdx, cpuIdx)
 	}
 }
 

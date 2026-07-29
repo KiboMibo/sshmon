@@ -13,53 +13,26 @@ func (m Model) renderDashboardWorkspace() string {
 		return titleStyle.Render("sshmon · Дашборд") + "\n\n" + dimStyle.Render("сервер не выбран · esc назад")
 	}
 	server := m.snapshot.Servers[m.selected]
+	if m.layout.wide {
+		return strings.Join(m.serverScreenLines(server), "\n")
+	}
 	lines := []string{
 		titleStyle.Render("sshmon · " + server.Name),
 		m.dashboardStatus(server),
 	}
 	if len(issuesForServer(m.snapshot.Issues, server.Name)) > 0 {
-		if m.layout.wide {
-			lines = append(lines, panelBox("ПРОБЛЕМЫ", "r переподключить", m.layout.width, wrapWords(m.dashboardIssueText(server.Name), m.layout.width-4))...)
-		} else {
-			lines = append(lines, dimStyle.Render("ПРОБЛЕМЫ: "+m.dashboardIssues(server.Name)))
-		}
+		lines = append(lines, dimStyle.Render("ПРОБЛЕМЫ: "+m.dashboardIssues(server.Name)))
 	}
-	if m.layout.wide {
-		budget := max(2, m.layout.height-len(lines)-1-4)
-		row1H := max(1, budget/3)
-		row2H := max(1, budget-row1H)
-		colW := (m.layout.width - 4) / 3
-		metricsCol := m.tilePanel(tileMetrics, "МЕТРИКИ", "p процессы · o порты · ctrl+h история", colW,
-			fitPanelHeight(dashboardMetricsContent(server, colW, false), row1H, m.dashboard.tileScrolls[tileMetrics]))
-		netBody := append(fitPanelHeight(dashboardNetworkContent(server), max(1, row1H-1), m.dashboard.tileScrolls[tileNetwork]), networkText(server))
-		netCol := m.tilePanel(tileNetwork, "СЕТЬ", "o порты", colW, netBody)
-		systemdCol := m.tilePanel(tileSystemd, "SYSTEMD", "f фильтр · j/k · enter journal", colW,
-			fitPanelHeight(m.dashboardUnitsContent(), row1H, m.systemdScroll(row1H)))
-		lines = append(lines, joinBoxes(metricsCol, netCol, systemdCol))
-		if m.dashboardHasDocker() {
-			dockerW := (m.layout.width - 2) / 3
-			dockerCol := m.tilePanel(tileDocker, "DOCKER", "d контейнеры", dockerW,
-				fitPanelHeight(m.dashboardDockerContent(), row2H, m.dashboard.tileScrolls[tileDocker]))
-			logsCol := m.tilePanel(tileLogs, m.dashboardLogsTitle(), "ctrl+l логи · x системный лог", m.layout.width-2-dockerW,
-				fitLogsHeight(m.dashboardLogsContent(), row2H, m.dashboard.tileScrolls[tileLogs]))
-			lines = append(lines, joinBoxes(dockerCol, logsCol))
-		} else {
-			lines = append(lines, m.tilePanel(tileLogs, m.dashboardLogsTitle(), "ctrl+l логи · x системный лог", m.layout.width,
-				fitLogsHeight(m.dashboardLogsContent(), row2H, m.dashboard.tileScrolls[tileLogs]))...)
-		}
-		lines = append(lines, "")
-	} else {
-		lines = append(lines,
-			dimStyle.Render("p процессы · o порты · ctrl+h история"),
-			dimStyle.Render("ctrl+l логи · d контейнеры · f фильтр · x системный лог"),
-		)
-		lines = append(lines, m.dashboardMetricsPanel(server)...)
-		lines = append(lines, m.dashboardDockerPanel()...)
-		lines = append(lines, dashboardNetworkPanel(server)...)
-		lines = append(lines, m.dashboardUnitsPanel()...)
-		lines = append(lines, m.dashboardLogsPanel()...)
-		lines = append(lines, dimStyle.Render("j/k юнит · enter journal · r переподключить · c чат · esc назад"))
-	}
+	lines = append(lines,
+		dimStyle.Render("p процессы · o порты · ctrl+h история"),
+		dimStyle.Render("ctrl+l логи · d контейнеры · f фильтр · x системный лог"),
+	)
+	lines = append(lines, m.dashboardMetricsPanel(server)...)
+	lines = append(lines, m.dashboardDockerPanel()...)
+	lines = append(lines, dashboardNetworkPanel(server)...)
+	lines = append(lines, m.dashboardUnitsPanel()...)
+	lines = append(lines, m.dashboardLogsPanel()...)
+	lines = append(lines, dimStyle.Render("j/k юнит · enter journal · r переподключить · c чат · esc назад"))
 	return strings.Join(lines, "\n")
 }
 

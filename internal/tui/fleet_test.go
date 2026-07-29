@@ -91,7 +91,7 @@ func TestFleetWideDrawsTwoBorderedColumns(t *testing.T) {
 	// When the Fleet screen is rendered.
 	view := m.View()
 	// Then both columns are framed and the right column shows enlarged host details.
-	for _, want := range []string{"╭", "╮", "╰", "╯", "СЕРВЕРЫ", "kava-claw", "проблемы"} {
+	for _, want := range []string{"╭", "╮", "╰", "╯", "СЕРВЕРЫ", "kava-claw", "ЧТО НЕ ТАК"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("wide fleet missing %q:\n%s", want, view)
 		}

@@ -53,6 +53,26 @@ type Container struct {
 	MemUsage string
 }
 
+type DockerCounts struct {
+	Running int
+	Stopped int
+	Broken  int
+}
+
+func (d DockerCounts) Total() int { return d.Running + d.Stopped + d.Broken }
+
+// CountContainerStatus разбирает строку статуса `docker ps` («Up 3 days», «Exited (0) …»).
+func (d *DockerCounts) CountContainerStatus(status string) {
+	switch {
+	case strings.HasPrefix(status, "Up"):
+		d.Running++
+	case strings.HasPrefix(status, "Exited"), strings.HasPrefix(status, "Created"):
+		d.Stopped++
+	default:
+		d.Broken++
+	}
+}
+
 type Metrics struct {
 	Name     string
 	Group    string
@@ -73,10 +93,11 @@ type Metrics struct {
 	SwapFreeKB  uint64
 	MemPct      float64
 
-	Disks []DiskUsage
-	IO    []DiskIO
-	Net   []NetRate
-	Ports []Port
+	Disks  []DiskUsage
+	IO     []DiskIO
+	Net    []NetRate
+	Ports  []Port
+	Docker DockerCounts
 }
 
 type Issue struct {

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ type logsScreen struct {
 	buffer      *collect.LogBuffer
 	sources     []collect.LogSource
 	source      int
+	level       logLevel
 	paused      bool
 	filtering   bool
 	filterInput textinput.Model
@@ -167,12 +169,14 @@ func (m *Model) handleLogsKey(key tea.KeyMsg) (tea.Cmd, bool) {
 		m.logs.filtering = true
 		m.logs.filterInput.Focus()
 		return textinput.Blink, true
-	case "s":
-		if len(m.logs.sources) > 0 {
-			m.logs.source = (m.logs.source + 1) % len(m.logs.sources)
-			return m.startLogsStream(), true
-		}
+	case "w":
+		m.logs.level = (m.logs.level + 1) % logLevel(len(logLevelNames))
+		m.logs.refresh()
 		return nil, true
+	case "s", "x", "right":
+		return m.cycleLogSource(1), true
+	case "left":
+		return m.cycleLogSource(-1), true
 	case "r":
 		return m.startLogsStream(), true
 	case "up", "down", "pgup", "pgdown", "home", "end":
@@ -183,9 +187,81 @@ func (m *Model) handleLogsKey(key tea.KeyMsg) (tea.Cmd, bool) {
 	return nil, false
 }
 
+func (m *Model) cycleLogSource(delta int) tea.Cmd {
+	count := len(m.logs.sources)
+	if count == 0 {
+		return nil
+	}
+	m.logs.source = ((m.logs.source+delta)%count + count) % count
+	return m.startLogsStream()
+}
+
+type logLevel int
+
+const (
+	logLevelAll logLevel = iota
+	logLevelInfo
+	logLevelWarn
+	logLevelError
+)
+
+var logLevelNames = [...]string{"all", "info", "warn", "error"}
+
+func logLineLevel(line string) logLevel {
+	lower := strings.ToLower(line)
+	switch {
+	case strings.Contains(lower, "error"), strings.Contains(lower, "fatal"), strings.Contains(lower, "crit"):
+		return logLevelError
+	case strings.Contains(lower, "warn"):
+		return logLevelWarn
+	case strings.Contains(lower, "debug"), strings.Contains(lower, "trace"):
+		return logLevelAll
+	}
+	return logLevelInfo
+}
+
+func (l logsScreen) visibleLines() []string {
+	lines := l.buffer.Visible()
+	if l.level == logLevelAll {
+		return lines
+	}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if logLineLevel(line) >= l.level {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func highlightMatches(line, filter string) string {
+	if filter == "" {
+		return line
+	}
+	lower := strings.ToLower(line)
+	needle := strings.ToLower(filter)
+	// ponytail: ToLower может изменить длину строки (например, ß→ss), тогда
+	// индексы из lower не совпадут с line — в этом случае не подсвечиваем.
+	if len(lower) != len(line) {
+		return line
+	}
+	var b strings.Builder
+	for {
+		idx := strings.Index(lower, needle)
+		if idx < 0 {
+			b.WriteString(line)
+			return b.String()
+		}
+		b.WriteString(line[:idx])
+		b.WriteString(warnStyle.Render(line[idx : idx+len(needle)]))
+		line = line[idx+len(needle):]
+		lower = lower[idx+len(needle):]
+	}
+}
+
 func (l *logsScreen) resize(width, height int) {
 	l.ensure()
-	bodyHeight := max(1, height-4)
+	bodyHeight := max(1, height-6)
 	if !l.ready {
 		l.viewport = viewport.New(max(1, width), bodyHeight)
 		l.ready = true
@@ -201,34 +277,91 @@ func (l *logsScreen) refresh() {
 	if !l.ready {
 		return
 	}
-	l.viewport.SetContent(strings.Join(l.buffer.Visible(), "\n"))
+	lines := l.visibleLines()
+	rendered := make([]string, len(lines))
+	for i, line := range lines {
+		rendered[i] = highlightMatches(line, l.filterInput.Value())
+	}
+	l.viewport.SetContent(strings.Join(rendered, "\n"))
 	if !l.paused {
 		l.viewport.GotoBottom()
 	}
 }
 
+func (m Model) logsState() string {
+	if m.logs.err != nil {
+		return "ошибка: " + m.logs.err.Error()
+	}
+	if m.logs.paused {
+		return "хвост на паузе"
+	}
+	return "хвост включён"
+}
+
+func logSourceLabel(source collect.LogSource) string {
+	label := string(source.Kind)
+	if source.Name != "" {
+		label += "/" + source.Name
+	}
+	return label
+}
+
+func (m Model) logsSourceAxis(width int) string {
+	labels := make([]string, 0, len(m.logs.sources))
+	for i, source := range m.logs.sources {
+		label := logSourceLabel(source)
+		if i == m.logs.source {
+			labels = append(labels, titleStyle.Render("["+label+"]"))
+			continue
+		}
+		labels = append(labels, dimStyle.Render(label))
+	}
+	left := dimStyle.Render("источник  ") + strings.Join(labels, " ")
+	right := dimStyle.Render(fmt.Sprintf("%d/%d · ← →", m.logs.source+1, max(1, len(m.logs.sources))))
+	return spread(left, right, width)
+}
+
+func (m Model) logsLevelAxis(width int) string {
+	labels := make([]string, 0, len(logLevelNames))
+	for i, name := range logLevelNames {
+		if logLevel(i) == m.logs.level {
+			labels = append(labels, titleStyle.Render("["+name+"]"))
+			continue
+		}
+		labels = append(labels, dimStyle.Render(name))
+	}
+	left := dimStyle.Render("уровень   ") + strings.Join(labels, " ")
+	return spread(left, dimStyle.Render("w уровень"), width)
+}
+
+func (m Model) logsFilterAxis(width int) string {
+	left := dimStyle.Render("фильтр    ")
+	switch {
+	case m.logs.filtering:
+		left += m.logs.filterInput.View()
+	case m.logs.filterInput.Value() != "":
+		left += "> " + m.logs.filterInput.Value()
+	default:
+		left += dimStyle.Render("> все строки")
+	}
+	return spread(left, dimStyle.Render(m.logsCountHint()), width)
+}
+
+func (m Model) logsCountHint() string {
+	return fmt.Sprintf("%d из %d строк", len(m.logs.visibleLines()), m.logs.buffer.Total())
+}
+
 func (m Model) renderLogs() string {
 	m.logs.ensure()
-	source := "system"
-	if len(m.logs.sources) > 0 {
-		selected := m.logs.sources[m.logs.source]
-		source = string(selected.Kind)
-		if selected.Name != "" {
-			source += ":" + selected.Name
-		}
+	width := m.layout.width
+	lines := []string{
+		spread(titleStyle.Render("ЛОГИ · "+m.selectedName()), dimStyle.Render(m.logsState()), width),
+		m.logsSourceAxis(width),
+		m.logsLevelAxis(width),
+		m.logsFilterAxis(width),
+		m.logs.viewport.View(),
+		dimStyle.Render("/ фильтр · w уровень · space пауза хвоста · ← → источник"),
+		dimStyle.Render("r переподключить · esc назад"),
 	}
-	state := "live"
-	if m.logs.paused {
-		state = "pause"
-	}
-	if m.logs.err != nil {
-		state = "ошибка: " + m.logs.err.Error()
-	}
-	view := titleStyle.Render("sshmon · "+m.selectedName()+" · Логи") + "\n"
-	view += dimStyle.Render(source+" · "+state) + "\n"
-	view += m.logs.viewport.View() + "\n"
-	if m.logs.filtering {
-		return view + m.logs.filterInput.View()
-	}
-	return view + dimStyle.Render("space пауза · / фильтр · s источник · r переподключить · esc назад")
+	return strings.Join(lines, "\n")
 }

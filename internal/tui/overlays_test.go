@@ -58,12 +58,19 @@ func TestHelpContentDependsOnActiveScreen(t *testing.T) {
 	fleetHelp := helpText(screenFleet)
 	dashboardHelp := helpText(screenDashboard)
 
-	// When their key hints are rendered.
-	// Then Dashboard advertises diagnostics while Fleet advertises search.
-	if strings.Contains(fleetHelp, "p процессы") || !strings.Contains(fleetHelp, "/ поиск") {
-		t.Fatalf("unexpected Fleet help: %q", fleetHelp)
+	// When their key maps are rendered.
+	// Then each map is titled by its screen and groups keys by purpose.
+	for _, want := range []string{"КЛАВИШИ · список хостов", "движение", "найти", "поиск по имени", "прочее"} {
+		if !strings.Contains(fleetHelp, want) {
+			t.Fatalf("Fleet help misses %q: %q", want, fleetHelp)
+		}
 	}
-	if !strings.Contains(dashboardHelp, "p процессы") || !strings.Contains(dashboardHelp, "l логи") {
-		t.Fatalf("unexpected Dashboard help: %q", dashboardHelp)
+	for _, want := range []string{"КЛАВИШИ · сервер", "процессы", "логи на весь экран", "фильтр юнитов"} {
+		if !strings.Contains(dashboardHelp, want) {
+			t.Fatalf("Dashboard help misses %q: %q", want, dashboardHelp)
+		}
+	}
+	if strings.Contains(fleetHelp, "история метрик") {
+		t.Fatalf("Fleet help advertises Dashboard-only keys: %q", fleetHelp)
 	}
 }

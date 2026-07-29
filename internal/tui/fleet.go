@@ -14,6 +14,9 @@ import (
 const fleetPageSize = 10
 
 type fleetModel struct {
+	searching   bool
+	expanded    bool
+	logbox      bool
 	filter      fleetFilter
 	preview     bool
 	initialized bool
@@ -74,7 +77,7 @@ func abs(value int) int {
 
 func fleetRowStyle(selected bool) lipgloss.Style {
 	if selected {
-		return focusStyle
+		return focusStyle.Copy().Background(lipgloss.AdaptiveColor{Light: "254", Dark: "236"})
 	}
 	return dimStyle
 }
@@ -120,36 +123,59 @@ func (m Model) configServers() []config.Server {
 
 func (m Model) renderFleet() string {
 	m.ensureFleet()
-	footer := dimStyle.Render("enter открыть · / поиск · g группа · ! проблемы · v вид · c чат · : команды · ? помощь · q выход")
+	head := []string{m.fleetHeader(m.layout.width)}
 	if m.layout.wide {
-		return m.renderFleetWide() + "\n" + footer
+		head = append(head, m.fleetGroupBox(m.layout.width)...)
 	}
-	listLines, _ := m.fleetListLines()
-	body := titleStyle.Render("sshmon · Серверы") + "\n" + strings.Join(listLines, "\n")
-	return body + "\n" + footer
+	visible := len(groupedServers(m.snapshot, m.configServers(), m.fleet.filter))
+	head = append(head, m.fleetContextLine(visible, m.fleetGroupTotal(), m.layout.width))
+	head = append(head, m.fleetLogboxLines(m.layout.width)...)
+	if m.layout.wide {
+		return strings.Join(head, "\n") + "\n" + m.renderFleetWide(len(head))
+	}
+	listLines, _ := m.fleetListLines(m.layout.width)
+	footer := dimStyle.Render("↑↓ enter открыть · → детали · / поиск · f проблемы · tab группа · v панель · ? ещё")
+	if m.fleet.expanded {
+		footer = dimStyle.Render("← свернуть · l логи · p процессы · d контейнеры · x ssh · v панель")
+	}
+	if m.fleet.logbox {
+		footer = dimStyle.Render("esc закрыть ящик · enter логи на весь экран · space пауза · ↑↓ по строкам")
+	}
+	return strings.Join(append(head, listLines...), "\n") + "\n" + footer
 }
 
-func (m Model) renderFleetWide() string {
-	listLines, selectedRow := m.fleetListLines()
-	contentH := max(1, m.layout.height-3)
-	scroll := fleetScroll(selectedRow, contentH, len(listLines))
+func (m Model) renderFleetWide(reserved int) string {
+	contentH := max(1, m.layout.height-3-reserved)
 	if !m.fleet.preview {
-		full := panelBoxStyled("СЕРВЕРЫ", "v детали · / поиск · g группа · ! проблемы", m.layout.width,
+		hint := "v боковая панель · / поиск · tab группа · f проблемы"
+		if m.fleet.expanded {
+			hint = "← свернуть · v боковая панель · l логи · p процессы · x ssh"
+		}
+		listLines, selectedRow := m.fleetListLines(m.layout.width - 4)
+		scroll := fleetScroll(selectedRow, contentH, len(listLines))
+		full := panelBoxStyled("СЕРВЕРЫ", hint, m.layout.width,
 			fitPanelHeight(listLines, contentH, scroll), dimStyle)
 		return strings.Join(full, "\n")
 	}
 	rightW := max(30, m.layout.width/4)
 	leftW := m.layout.width - rightW - 2
-	left := panelBoxStyled("СЕРВЕРЫ", "enter открыть · v свернуть · / поиск", leftW,
+	listLines, selectedRow := m.fleetListLines(leftW - 4)
+	scroll := fleetScroll(selectedRow, contentH, len(listLines))
+	leftHint := "enter открыть · → детали · / поиск"
+	if m.fleet.expanded {
+		leftHint = "← свернуть · l логи · p процессы · x ssh"
+	}
+	left := panelBoxStyled("СЕРВЕРЫ", leftHint, leftW,
 		fitPanelHeight(listLines, contentH, scroll), dimStyle)
-	right := panelBoxStyled(m.fleetDetailTitle(), "! проблемы · g группа", rightW,
+	right := panelBoxStyled(m.fleetDetailTitle(), "v скрыть · f проблемы · tab группа", rightW,
 		fitPanelHeight(m.fleetDetailContent(rightW-4), contentH, 0), dimStyle)
 	return joinBoxes(left, right)
 }
 
-func (m Model) fleetListLines() ([]string, int) {
+func (m Model) fleetListLines(width int) ([]string, int) {
 	visible := groupedServers(m.snapshot, m.configServers(), m.fleet.filter)
-	lines := []string{dimStyle.Render("  СОСТ  ИМЯ             CPU   MEM   LOAD   UPTIME")}
+	cols := fleetColumnLayout(width)
+	lines := []string{dimStyle.Render(cols.header())}
 	selectedRow := 0
 	previousGroup := ""
 	for _, index := range visible {
@@ -160,24 +186,95 @@ func (m Model) fleetListLines() ([]string, int) {
 		if index == m.selected {
 			selectedRow = len(lines)
 		}
-		lines = append(lines, m.renderFleetRow(index))
+		lines = append(lines, m.renderFleetRow(index, cols))
+		if index == m.selected && m.fleet.expanded {
+			lines = append(lines, m.fleetCardLines(m.snapshot.Servers[index], width)...)
+		}
 	}
 	if len(visible) == 0 {
 		lines = append(lines, dimStyle.Render("  серверы не найдены"))
 	}
+	if note := m.fleetHiddenNote(len(visible), m.fleetGroupTotal()); note != "" {
+		lines = append(lines, note)
+	}
 	return lines, selectedRow
 }
 
-func (m Model) renderFleetRow(index int) string {
-	server := m.snapshot.Servers[index]
-	cursor := "  "
-	if index == m.selected {
-		cursor = "▶ "
+type fleetColumns struct {
+	width int
+	name  int
+	gap   string
+}
+
+func fleetColumnLayout(width int) fleetColumns {
+	const numeric = 4 + 4 + 6 + 9 + 11
+	const gaps = 5
+	name := max(12, min(24, width-4-numeric-gaps))
+	gap := max(1, min(10, (width-4-numeric-name)/gaps))
+	name = max(name, width-4-numeric-gap*gaps)
+	return fleetColumns{width: width, name: name, gap: strings.Repeat(" ", gap)}
+}
+
+func (c fleetColumns) row(name, cpu, mem, load, uptime, docker string) string {
+	cells := []string{
+		fmt.Sprintf("%-*s", c.name, truncateCells(name, c.name)),
+		fmt.Sprintf("%4s", cpu),
+		fmt.Sprintf("%4s", mem),
+		fmt.Sprintf("%6s", load),
+		fmt.Sprintf("%9s", uptime),
+		docker,
 	}
-	row := fmt.Sprintf("%s%s  %-15s %4.0f%% %4.0f%% %6.2f %8s",
-		cursor, statusGlyph(server), truncateCells(server.Name, 15),
-		server.CPUPct, server.MemPct, server.Load1, formatUptime(server.Uptime))
-	return fleetRowStyle(index == m.selected).Render(row)
+	return strings.Join(cells, c.gap)
+}
+
+func (c fleetColumns) header() string {
+	return "    " + c.row("ИМЯ", "CPU", "MEM", "LOAD", "UPTIME", "DOCKER")
+}
+
+func (m Model) renderFleetRow(index int, cols fleetColumns) string {
+	server := m.snapshot.Servers[index]
+	selected := index == m.selected
+	glyph := statusGlyph(server)
+	if selected {
+		// У выделенной строки глиф без своего цвета: вложенный ANSI-reset обрывает фон подсветки.
+		glyph = statusRune(server)
+	}
+	cpu, mem, load, uptime := "—", "—", "—", "—"
+	if server.Online {
+		cpu = fmt.Sprintf("%.0f%%", server.CPUPct)
+		mem = fmt.Sprintf("%.0f%%", server.MemPct)
+		load = fmt.Sprintf("%.2f", server.Load1)
+		uptime = formatUptime(server.Uptime)
+	}
+	row := "  " + glyph + " " + cols.row(server.Name, cpu, mem, load, uptime, dockerCell(server.Docker))
+	return fleetRowStyle(selected).Width(cols.width).Render(row)
+}
+
+func dockerCell(d collect.DockerCounts) string {
+	if d.Total() == 0 {
+		return "—"
+	}
+	parts := make([]string, 0, 3)
+	if d.Running > 0 {
+		parts = append(parts, fmt.Sprintf("●%d", d.Running))
+	}
+	if d.Stopped > 0 {
+		parts = append(parts, fmt.Sprintf("○%d", d.Stopped))
+	}
+	if d.Broken > 0 {
+		parts = append(parts, fmt.Sprintf("⚠%d", d.Broken))
+	}
+	return strings.Join(parts, " ")
+}
+
+func statusRune(server collect.Metrics) string {
+	if server.Time.IsZero() {
+		return "◌"
+	}
+	if !server.Online {
+		return "×"
+	}
+	return "●"
 }
 
 func statusGlyph(server collect.Metrics) string {

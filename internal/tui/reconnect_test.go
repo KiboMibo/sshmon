@@ -114,7 +114,7 @@ func TestReconnectAppearsInDashboardHelpAndPalette(t *testing.T) {
 	items := paletteItems(m)
 
 	// Then reconnect is discoverable in both surfaces.
-	if !strings.Contains(helpText(screenDashboard), "r переподключить") {
+	if !strings.Contains(helpText(screenDashboard), "переподключить сервер") {
 		t.Fatal("Dashboard help misses reconnect")
 	}
 	found := false

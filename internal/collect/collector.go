@@ -117,7 +117,7 @@ func (c *Collector) poll(ctx context.Context, st *serverState) error {
 		NumCPU:     s.c.ncpu,
 		MemTotalKB: s.memTotal, MemAvailKB: s.memAvail,
 		SwapTotalKB: s.swapTot, SwapFreeKB: s.swapFree,
-		Disks: s.disks, Ports: s.ports,
+		Disks: s.disks, Ports: s.ports, Docker: s.docker,
 	}
 	if m.MemTotalKB > 0 {
 		m.MemPct = 100 * float64(m.MemTotalKB-m.MemAvailKB) / float64(m.MemTotalKB)

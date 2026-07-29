@@ -95,7 +95,7 @@ func TestDashboardWideDrawsBorderedPanelsWithLocalHints(t *testing.T) {
 	// Then every panel is framed and carries its own data-local hint in the border.
 	for _, want := range []string{
 		"╭", "╮", "╰", "╯",
-		"p процессы · o порты · ctrl+h история",
+		"ctrl+h история",
 		"d контейнеры",
 		"f фильтр · j/k · enter journal",
 		"ctrl+l логи · x системный лог",
@@ -227,7 +227,7 @@ func TestSystemdContentColorsStateText(t *testing.T) {
 	}
 }
 
-func TestDashboardWideRowOneHasThreeColumnsDockerBelow(t *testing.T) {
+func TestDashboardWideDockerAndServicesShareRowLogsBelow(t *testing.T) {
 	t.Parallel()
 	// Given a wide dashboard with running Docker.
 	m := dashboardWorkspaceFixture()
@@ -235,29 +235,26 @@ func TestDashboardWideRowOneHasThreeColumnsDockerBelow(t *testing.T) {
 	m.dashboard.containers = dashboardContainersState{items: []collect.Container{{Name: "api", Status: "Up"}}, status: diagnosticsReady}
 	// When the full view is rendered.
 	view := m.View()
-	// Then МЕТРИКИ, СЕТЬ, SYSTEMD share row 1 and DOCKER sits on a later row.
-	metricsLine, netLine, systemdLine, dockerLine := -1, -1, -1, -1
+	// Then DOCKER and СЕРВИСЫ share one row and ЛОГИ sits below them.
+	dockerLine, servicesLine, logsLine := -1, -1, -1
 	for i, line := range strings.Split(view, "\n") {
 		if !strings.Contains(line, "╭─") {
 			continue
 		}
-		if strings.Contains(line, "МЕТРИКИ") {
-			metricsLine = i
-		}
-		if strings.Contains(line, "СЕТЬ") {
-			netLine = i
-		}
-		if strings.Contains(line, "SYSTEMD") {
-			systemdLine = i
-		}
 		if strings.Contains(line, "DOCKER") {
 			dockerLine = i
 		}
+		if strings.Contains(line, "СЕРВИСЫ") {
+			servicesLine = i
+		}
+		if strings.Contains(line, "ЛОГИ") {
+			logsLine = i
+		}
 	}
-	if metricsLine < 0 || netLine != metricsLine || systemdLine != metricsLine {
-		t.Fatalf("row 1 misaligned: МЕТРИКИ=%d СЕТЬ=%d SYSTEMD=%d", metricsLine, netLine, systemdLine)
+	if dockerLine < 0 || servicesLine != dockerLine {
+		t.Fatalf("row misaligned: DOCKER=%d СЕРВИСЫ=%d", dockerLine, servicesLine)
 	}
-	if dockerLine <= metricsLine {
-		t.Fatalf("DOCKER=%d must be below row 1=%d", dockerLine, metricsLine)
+	if logsLine <= dockerLine {
+		t.Fatalf("ЛОГИ=%d must be below row=%d", logsLine, dockerLine)
 	}
 }

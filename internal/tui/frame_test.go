@@ -93,7 +93,7 @@ func TestOverlayKeepsHintsAboveBottomBorder(t *testing.T) {
 	view := m.View()
 
 	// Then Help stays visible while Fleet hints remain on the final content row.
-	if !strings.Contains(view, "Справка") {
+	if !strings.Contains(view, "КЛАВИШИ") {
 		t.Fatalf("view misses help overlay:\n%s", view)
 	}
 	assertFooterAboveBottomBorder(t, view, 24, "enter открыть")
@@ -109,7 +109,7 @@ func TestOverlayRendersInsideFrame(t *testing.T) {
 	view := m.View()
 
 	// Then the overlay stays inside the full-height frame.
-	if !strings.Contains(view, "Справка") {
+	if !strings.Contains(view, "КЛАВИШИ") {
 		t.Fatalf("view misses help overlay:\n%s", view)
 	}
 	lines := strings.Split(view, "\n")
