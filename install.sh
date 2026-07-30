@@ -1,7 +1,7 @@
 #!/bin/sh
 # install.sh — установка sshmon (Linux/macOS, amd64/arm64) из GitHub Releases.
 #
-#   curl -fsSL https://raw.githubusercontent.com/idesyatov/sshmon/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/KiboMibo/sshmon/main/install.sh | sh
 #   curl -fsSL .../install.sh | BINDIR="$HOME/.local/bin" sh   # своя папка, без sudo
 #   curl -fsSL .../install.sh | VERSION=v0.5.0 sh              # конкретная версия
 #
@@ -10,7 +10,7 @@
 # в целевую папку нет прав на запись.
 set -eu
 
-REPO="idesyatov/sshmon"
+REPO="KiboMibo/sshmon"
 BINARY="sshmon"
 BINDIR="${BINDIR:-/usr/local/bin}"
 VERSION="${VERSION:-}"
@@ -25,7 +25,10 @@ need curl
 need tar
 
 # curl с запасным вариантом по IPv4 (некоторые сети без рабочего IPv6).
-fetch_out() { curl -fsSL -o "$2" "$1" || curl -fsSL --ipv4 -o "$2" "$1"; }
+# fetch_out — для обязательных загрузок (ошибки видны); fetch_quiet — для
+# необязательных (например checksums.txt), где 404 — норма и не должен пугать.
+fetch_out()   { curl -fsSL -o "$2" "$1" || curl -fsSL --ipv4 -o "$2" "$1"; }
+fetch_quiet() { curl -fsL -o "$2" "$1" 2>/dev/null || curl -fsL --ipv4 -o "$2" "$1" 2>/dev/null; }
 
 # SHA-256: Linux — sha256sum, macOS — shasum -a 256.
 sha256() {
@@ -69,11 +72,20 @@ info "скачиваю $asset..."
 fetch_out "$base/$asset" "$tmp/$asset" || err "не удалось скачать $asset — нет такой сборки для $VERSION/${os}_${arch}?"
 
 info "проверяю SHA-256..."
-fetch_out "$base/checksums.txt" "$tmp/checksums.txt" || err "в релизе $VERSION нет checksums.txt — возьмите релиз с контрольными суммами (VERSION=...)"
-want="$(awk -v f="$asset" '$2==f || $2=="*"f {print $1}' "$tmp/checksums.txt" | head -n1)"
-[ -n "$want" ] || err "в checksums.txt нет строки для $asset"
-got="$(sha256 "$tmp/$asset")"
-[ "$want" = "$got" ] || err "контрольная сумма не совпала (ожидалось $want, получено $got)"
+# Проверка бест-эффорт: если в релизе есть checksums.txt — сверяем строго,
+# иначе предупреждаем и ставим без проверки (старые релизы без сумм).
+if fetch_quiet "$base/checksums.txt" "$tmp/checksums.txt"; then
+	want="$(awk -v f="$asset" '$2==f || $2=="*"f {print $1}' "$tmp/checksums.txt" | head -n1)"
+	if [ -n "$want" ]; then
+		got="$(sha256 "$tmp/$asset")"
+		[ "$want" = "$got" ] || err "контрольная сумма не совпала (ожидалось $want, получено $got)"
+		info "SHA-256 совпала"
+	else
+		info "внимание: в checksums.txt нет строки для $asset — ставлю без проверки"
+	fi
+else
+	info "внимание: в релизе $VERSION нет checksums.txt — ставлю без проверки контрольной суммы"
+fi
 
 info "распаковываю..."
 tar xzf "$tmp/$asset" -C "$tmp"

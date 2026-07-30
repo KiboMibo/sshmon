@@ -1,9 +1,9 @@
 # sshmon
 
-[![CI](https://github.com/idesyatov/sshmon/actions/workflows/ci.yml/badge.svg)](https://github.com/idesyatov/sshmon/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/idesyatov/sshmon)](https://github.com/idesyatov/sshmon/releases)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/idesyatov/sshmon)](go.mod)
-[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos-lightgrey)](https://github.com/idesyatov/sshmon/releases)
+[![CI](https://github.com/KiboMibo/sshmon/actions/workflows/ci.yml/badge.svg)](https://github.com/KiboMibo/sshmon/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/KiboMibo/sshmon)](https://github.com/KiboMibo/sshmon/releases)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/KiboMibo/sshmon)](go.mod)
+[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos-lightgrey)](https://github.com/KiboMibo/sshmon/releases)
 
 **TUI-мониторинг Linux-серверов по SSH без агентов** — плюс чат с LLM и встроенный
 MCP-сервер. Раз в несколько секунд одним `exec`'ом читает `/proc` (CPU, память,
@@ -26,7 +26,7 @@ BusyBox-роутерах (OpenWrt/Keenetic: `logread` вместо journalctl). 
 
 ```sh
 # 1. Установить (Linux/macOS, amd64/arm64)
-curl -fsSL https://raw.githubusercontent.com/idesyatov/sshmon/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/KiboMibo/sshmon/main/install.sh | sh
 
 # 2. Запустить — при первом старте выберите хосты из ~/.ssh/config
 sshmon
@@ -37,9 +37,10 @@ sshmon --config ./my.yaml        # свой конфиг
 sshmon --headless                # фон: сбор метрик + MCP-сервер на stdio
 ```
 
-Скрипт ставит бинарник в `/usr/local/bin` (sudo только при необходимости), сверив
-SHA-256. Своя папка — `... | BINDIR="$HOME/.local/bin" sh`; конкретная версия —
-`... | VERSION=v0.5.0 sh`. Сборка из исходников — в разделе [Установка](#установка).
+Скрипт ставит бинарник в `/usr/local/bin` (sudo только при необходимости) и
+сверяет SHA-256, если в релизе есть `checksums.txt`. Своя папка —
+`... | BINDIR="$HOME/.local/bin" sh`; конкретная версия — `... | VERSION=v0.5.0 sh`.
+Сборка из исходников — в разделе [Установка](#установка).
 
 Конфиг сохраняется в `~/.config/sshmon/config.yaml`. Если `~/.ssh/config` пуст —
 sshmon создаст шаблон, впишите серверы вручную (см. ниже).
@@ -53,12 +54,12 @@ sshmon создаст шаблон, впишите серверы вручную
 <summary>Скрипт установки (curl | sh)</summary>
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/idesyatov/sshmon/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/KiboMibo/sshmon/main/install.sh | sh
 ```
 
-Определяет ОС/архитектуру (Linux/macOS, amd64/arm64), берёт последний релиз,
-сверяет SHA-256 и ставит бинарник в `/usr/local/bin` (`sudo` только если нет прав
-на запись). Переменные окружения:
+Определяет ОС/архитектуру (Linux/macOS, amd64/arm64), берёт последний релиз и
+ставит бинарник в `/usr/local/bin` (`sudo` только если нет прав на запись). Если в
+релизе опубликован `checksums.txt` — проверяет SHA-256. Переменные окружения:
 
 - `BINDIR` — папка установки, например `$HOME/.local/bin` (без sudo);
 - `VERSION` — конкретная версия, например `v0.5.0`.
@@ -66,7 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/idesyatov/sshmon/main/install.sh | 
 Хотите сперва прочитать скрипт — скачайте и запустите локально:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/idesyatov/sshmon/main/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/KiboMibo/sshmon/main/install.sh -o install.sh
 less install.sh
 sh install.sh
 ```
@@ -78,7 +79,7 @@ sh install.sh
 Нужен Go (версия — см. [go.mod](go.mod)).
 
 ```sh
-git clone https://github.com/idesyatov/sshmon.git
+git clone https://github.com/KiboMibo/sshmon.git
 cd sshmon
 go build -o sshmon ./cmd/sshmon
 # при желании — в $PATH:
@@ -89,7 +90,7 @@ install -m755 sshmon ~/.local/bin/sshmon
 <details>
 <summary>Готовый бинарник</summary>
 
-На странице [Releases](https://github.com/idesyatov/sshmon/releases) публикуются
+На странице [Releases](https://github.com/KiboMibo/sshmon/releases) публикуются
 архивы под Linux и macOS (amd64/arm64):
 
 ```sh
