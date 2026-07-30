@@ -3,7 +3,7 @@
 [![CI](https://github.com/KiboMibo/sshmon/actions/workflows/ci.yml/badge.svg)](https://github.com/KiboMibo/sshmon/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/KiboMibo/sshmon)](https://github.com/KiboMibo/sshmon/releases)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/KiboMibo/sshmon)](go.mod)
-[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos-lightgrey)](https://github.com/KiboMibo/sshmon/releases)
+[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey)](https://github.com/KiboMibo/sshmon/releases)
 
 **TUI-мониторинг Linux-серверов по SSH без агентов** — плюс чат с LLM и встроенный
 MCP-сервер. Раз в несколько секунд одним `exec`'ом читает `/proc` (CPU, память,
@@ -11,7 +11,7 @@ load, диски, IO, сеть), `df` и `ss`. Работает и на обыч
 BusyBox-роутерах (OpenWrt/Keenetic: `logread` вместо journalctl). Ничего не ставит
 на сервер и ничего на нём не меняет — только чтение.
 
-![Демо sshmon](docs/demo.gif)
+![Демо sshmon](demo/demo.gif)
 
 ## Возможности
 
@@ -91,13 +91,16 @@ install -m755 sshmon ~/.local/bin/sshmon
 <summary>Готовый бинарник</summary>
 
 На странице [Releases](https://github.com/KiboMibo/sshmon/releases) публикуются
-архивы под Linux и macOS (amd64/arm64):
+архивы под Linux и macOS (amd64/arm64, `.tar.gz`) и Windows (amd64, `.zip`):
 
 ```sh
 tar xzf sshmon_<версия>_linux_amd64.tar.gz
 install -m755 sshmon ~/.local/bin/sshmon
 sshmon --version
 ```
+
+Windows: скачайте `sshmon_<версия>_windows_amd64.zip`, распакуйте `sshmon.exe`
+и положите в папку из `PATH`.
 </details>
 
 ## Конфигурация

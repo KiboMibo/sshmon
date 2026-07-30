@@ -41,6 +41,7 @@ os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$os" in
 	linux)  os=linux ;;
 	darwin) os=darwin ;;
+	mingw*|msys*|cygwin*|windows*) err "на Windows скачайте sshmon_<версия>_windows_amd64.zip со страницы Releases: https://github.com/KiboMibo/sshmon/releases" ;;
 	*) err "неподдерживаемая ОС: $os (нужна Linux или macOS)" ;;
 esac
 arch="$(uname -m)"
