@@ -30,6 +30,7 @@ jobs:
             tar czf "dist/sshmon_${GITHUB_REF_NAME}_${os}_${arch}.tar.gz" sshmon
           done
           rm sshmon
+          (cd dist && sha256sum sshmon_*.tar.gz > checksums.txt)
       - name: upload
         env:
           GH_TOKEN: ${{ github.token }}
@@ -43,6 +44,6 @@ jobs:
             echo "## Formula/sshmon.rb"
             echo '```'
             echo "version \"${GITHUB_REF_NAME#v}\""
-            (cd dist && sha256sum *)
+            cat dist/checksums.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

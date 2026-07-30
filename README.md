@@ -25,19 +25,21 @@ BusyBox-роутерах (OpenWrt/Keenetic: `logread` вместо journalctl). 
 ## Быстрый старт
 
 ```sh
-# 1. Собрать
-git clone https://github.com/idesyatov/sshmon.git
-cd sshmon
-go build -o sshmon ./cmd/sshmon
+# 1. Установить (Linux/macOS, amd64/arm64)
+curl -fsSL https://raw.githubusercontent.com/idesyatov/sshmon/main/install.sh | sh
 
 # 2. Запустить — при первом старте выберите хосты из ~/.ssh/config
-./sshmon
+sshmon
 
 # 3. Дальше
-./sshmon --import                 # добавить новые хосты из ~/.ssh/config
-./sshmon --config ./my.yaml       # свой конфиг
-./sshmon --headless               # фон: сбор метрик + MCP-сервер на stdio
+sshmon --import                  # добавить новые хосты из ~/.ssh/config
+sshmon --config ./my.yaml        # свой конфиг
+sshmon --headless                # фон: сбор метрик + MCP-сервер на stdio
 ```
+
+Скрипт ставит бинарник в `/usr/local/bin` (sudo только при необходимости), сверив
+SHA-256. Своя папка — `... | BINDIR="$HOME/.local/bin" sh`; конкретная версия —
+`... | VERSION=v0.5.0 sh`. Сборка из исходников — в разделе [Установка](#установка).
 
 Конфиг сохраняется в `~/.config/sshmon/config.yaml`. Если `~/.ssh/config` пуст —
 sshmon создаст шаблон, впишите серверы вручную (см. ниже).
@@ -46,6 +48,29 @@ sshmon создаст шаблон, впишите серверы вручную
 `esc` — назад, `q` — выход из Fleet.
 
 ## Установка
+
+<details>
+<summary>Скрипт установки (curl | sh)</summary>
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/idesyatov/sshmon/main/install.sh | sh
+```
+
+Определяет ОС/архитектуру (Linux/macOS, amd64/arm64), берёт последний релиз,
+сверяет SHA-256 и ставит бинарник в `/usr/local/bin` (`sudo` только если нет прав
+на запись). Переменные окружения:
+
+- `BINDIR` — папка установки, например `$HOME/.local/bin` (без sudo);
+- `VERSION` — конкретная версия, например `v0.5.0`.
+
+Хотите сперва прочитать скрипт — скачайте и запустите локально:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/idesyatov/sshmon/main/install.sh -o install.sh
+less install.sh
+sh install.sh
+```
+</details>
 
 <details>
 <summary>Из исходников</summary>
