@@ -24,12 +24,23 @@ jobs:
       - name: build
         run: |
           mkdir dist
-          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
-            os="${target%/*}"; arch="${target#*/}"
-            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -o sshmon ./cmd/sshmon
-            tar czf "dist/sshmon_${GITHUB_REF_NAME}_${os}_${arch}.tar.gz" sshmon
-          done
-          rm sshmon
+          pack() {
+            os="$1"; arch="$2"; ext="$3"
+            bin="sshmon${ext}"
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -o "$bin" ./cmd/sshmon
+            if [ "$os" = windows ]; then
+              zip -q "dist/sshmon_${GITHUB_REF_NAME}_${os}_${arch}.zip" "$bin"
+            else
+              tar czf "dist/sshmon_${GITHUB_REF_NAME}_${os}_${arch}.tar.gz" "$bin"
+            fi
+            rm "$bin"
+          }
+          pack darwin  arm64 ""
+          pack darwin  amd64 ""
+          pack linux   arm64 ""
+          pack linux   amd64 ""
+          pack windows amd64 ".exe"
+          (cd dist && sha256sum sshmon_* > checksums.txt)
       - name: upload
         env:
           GH_TOKEN: ${{ github.token }}
@@ -43,6 +54,6 @@ jobs:
             echo "## Formula/sshmon.rb"
             echo '```'
             echo "version \"${GITHUB_REF_NAME#v}\""
-            (cd dist && sha256sum *)
+            cat dist/checksums.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

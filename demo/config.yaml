@@ -1,0 +1,34 @@
+# Демо-конфиг для записи GIF: три одноразовых SSH-контейнера (см. sshd/).
+# НЕ пример для реального использования — пароль и insecure_host_key только для демо.
+interval: 2s
+
+servers:
+  - name: web1
+    host: web1
+    port: 22
+    user: root
+    password: demo
+    insecure_host_key: true
+    group: prod
+  - name: db1
+    host: db1
+    port: 22
+    user: root
+    password: demo
+    insecure_host_key: true
+    group: prod
+  - name: cache1
+    host: cache1
+    port: 22
+    user: root
+    password: demo
+    insecure_host_key: true
+    group: dev
+
+thresholds:
+  cpu: 90
+  mem: 90
+  disk: 90
+
+history:
+  enabled: false
