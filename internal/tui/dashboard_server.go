@@ -11,7 +11,7 @@ func (m Model) serverScreenLines(server collect.Metrics) []string {
 	width := m.layout.width
 	lines := []string{m.serverHeader(server, width)}
 	if len(issuesForServer(m.snapshot.Issues, server.Name)) > 0 {
-		lines = append(lines, panelBox("ПРОБЛЕМЫ", "r переподключить", width, wrapWords(m.dashboardIssueText(server.Name), width-4))...)
+		lines = append(lines, panelBox("ПРОБЛЕМЫ", "r обновить · ctrl+r переподключить", width, wrapWords(m.dashboardIssueText(server.Name), width-4))...)
 	}
 	lines = append(lines, "")
 	for _, row := range m.serverMetricGrid(server, width) {
@@ -44,9 +44,11 @@ func (m Model) serverScreenLines(server collect.Metrics) []string {
 	} else {
 		lines = append(lines, rightCol...)
 	}
-	lines = append(lines, m.tilePanel(tileLogs, m.dashboardLogsTitle(), "ctrl+l логи · x системный лог", width,
+	lines = append(lines, m.tilePanel(tileLogs, m.dashboardLogsTitle(), "l логи · s системный лог", width,
 		fitLogsHeight(m.dashboardLogsContent(), logsH, m.dashboard.tileScrolls[tileLogs]))...)
-	return append(lines, dimStyle.Render("esc назад · p процессы · o порты · d контейнеры · ctrl+h история · r переподключить · ? ещё"))
+	// Подсказки портов, контейнеров и логов живут в рамках своих панелей, поэтому
+	// в футер не дублируются: строка обрезается по ширине, а «? ещё» терять нельзя.
+	return append(lines, dimStyle.Render("esc назад · p процессы · h история · x ssh · r обновить · ctrl+r переподключить · ? ещё"))
 }
 
 func (m Model) serverHeader(server collect.Metrics, width int) string {

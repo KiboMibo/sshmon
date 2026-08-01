@@ -24,15 +24,17 @@ func (m Model) renderDashboardWorkspace() string {
 		lines = append(lines, dimStyle.Render("ПРОБЛЕМЫ: "+m.dashboardIssues(server.Name)))
 	}
 	lines = append(lines,
-		dimStyle.Render("p процессы · o порты · ctrl+h история"),
-		dimStyle.Render("ctrl+l логи · d контейнеры · f фильтр · x системный лог"),
+		dimStyle.Render("p процессы · o порты · h история · x ssh · c чат"),
+		dimStyle.Render("l логи · d контейнеры · f фильтр · s системный лог"),
 	)
 	lines = append(lines, m.dashboardMetricsPanel(server)...)
 	lines = append(lines, m.dashboardDockerPanel()...)
 	lines = append(lines, dashboardNetworkPanel(server)...)
 	lines = append(lines, m.dashboardUnitsPanel()...)
 	lines = append(lines, m.dashboardLogsPanel()...)
-	lines = append(lines, dimStyle.Render("j/k юнит · enter journal · r переподключить · c чат · esc назад"))
+	// Футер обрезается по ширине терминала, поэтому «c чат» переехал строкой выше:
+	// на 80 колонках хвост со «esc назад» иначе не помещается.
+	lines = append(lines, dimStyle.Render("j/k юнит · enter journal · r обновить · ctrl+r переподключить · esc назад"))
 	return strings.Join(lines, "\n")
 }
 

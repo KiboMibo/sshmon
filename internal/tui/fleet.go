@@ -139,7 +139,7 @@ func (m Model) renderFleet() string {
 		footer = dimStyle.Render("← свернуть · l логи · p процессы · d контейнеры · x ssh · v панель")
 	}
 	if m.fleet.logbox {
-		footer = dimStyle.Render("esc закрыть ящик · enter логи на весь экран · space пауза · ↑↓ по строкам")
+		footer = dimStyle.Render("esc закрыть ящик · ↑↓ хост · s источник · space пауза · enter весь экран")
 	}
 	return strings.Join(append(head, listLines...), "\n") + "\n" + footer
 }

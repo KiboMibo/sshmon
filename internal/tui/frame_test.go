@@ -68,7 +68,7 @@ func TestDashboardHintsStayAboveBottomBorder(t *testing.T) {
 	view := m.View()
 
 	// Then Dashboard hints occupy the final content row.
-	assertFooterAboveBottomBorder(t, view, 24, "r переподключить")
+	assertFooterAboveBottomBorder(t, view, 24, "ctrl+r переподключить")
 }
 
 func TestDeepScreenHintsStayAboveBottomBorder(t *testing.T) {

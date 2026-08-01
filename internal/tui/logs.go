@@ -364,8 +364,8 @@ func (m Model) renderLogs() string {
 		m.logsLevelAxis(width),
 		m.logsFilterAxis(width),
 		m.logs.viewport.View(),
-		dimStyle.Render("/ фильтр · w уровень · space пауза хвоста · ← → источник"),
-		dimStyle.Render("r переподключить · esc назад"),
+		dimStyle.Render("/ фильтр · w уровень · space пауза хвоста · s ← → источник"),
+		dimStyle.Render("r обновить · ctrl+r переподключить · esc назад"),
 	}
 	return strings.Join(lines, "\n")
 }
