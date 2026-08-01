@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -25,7 +26,7 @@ func logboxTestModel() (Model, *fakeLogStreamer) {
 	return m, streamer
 }
 
-func TestFleetLogboxOpensOverListAndEscapeCloses(t *testing.T) {
+func TestFleetLogboxOpensInsideListAndEscapeCloses(t *testing.T) {
 	// Given: the fleet screen with a server and a log stream available.
 	m, streamer := logboxTestModel()
 
@@ -35,7 +36,7 @@ func TestFleetLogboxOpensOverListAndEscapeCloses(t *testing.T) {
 		cmd()
 	}
 
-	// Then: the drawer is visible above the list and a stream was requested.
+	// Then: the drawer is visible inside the list and a stream was requested.
 	if !opened.fleet.logbox {
 		t.Fatal("logbox not opened")
 	}
@@ -58,6 +59,103 @@ func TestFleetLogboxOpensOverListAndEscapeCloses(t *testing.T) {
 	}
 }
 
+func TestFleetLogboxSitsRightUnderItsHostRow(t *testing.T) {
+	// Given: экран флота с тремя хостами и курсором на среднем.
+	streamer := &fakeLogStreamer{streams: []collect.LogStream{{
+		Lines:  make(chan string, 1),
+		Errors: make(chan error, 1),
+		Close:  func() error { return nil },
+	}}}
+	m := Model{
+		screen:    screenFleet,
+		snapshot:  snapshotWithServers("web", "db", "cache"),
+		logSource: streamer,
+		logs:      newLogsScreen(),
+		layout:    newLayout(120, 34),
+		fleet:     newFleetModel(),
+		selected:  1,
+	}
+
+	// When: открыт ящик логов.
+	opened, cmd := updateModel(t, m, key("l"))
+	if cmd != nil {
+		cmd()
+	}
+	lines := strings.Split(opened.View(), "\n")
+
+	// Then: заголовок ящика идёт следующей строкой после строки своего хоста,
+	// а строка соседнего хоста — уже после ящика.
+	row, box, next := -1, -1, -1
+	for i, line := range lines {
+		plain := stripANSI(line)
+		switch {
+		case strings.Contains(plain, fleetMarker+"db"):
+			row = i
+		case strings.Contains(plain, "ЛОГИ · db"):
+			box = i
+		case strings.Contains(plain, "cache") && next < 0:
+			next = i
+		}
+	}
+	if row < 0 || box < 0 || next < 0 {
+		t.Fatalf("строка=%d ящик=%d следующий хост=%d:\n%s", row, box, next, opened.View())
+	}
+	if box != row+1 {
+		t.Fatalf("ящик оторван от своей строки (строка %d, ящик %d):\n%s", row, box, opened.View())
+	}
+	if next <= box {
+		t.Fatalf("список не продолжился под ящиком (ящик %d, cache %d):\n%s", box, next, opened.View())
+	}
+	// И: ящик врезан в панель списка, а не нарисован над ней.
+	if !strings.Contains(stripANSI(lines[box]), "│ ╭─ ЛОГИ · db") {
+		t.Fatalf("ящик рисуется вне панели списка: %q", stripANSI(lines[box]))
+	}
+}
+
+func TestFleetLogboxStaysInFrameWithItsRowOnALongList(t *testing.T) {
+	// Given: 28 хостов на невысоком терминале и курсор на последнем.
+	servers := make([]string, 0, 28)
+	for i := range 28 {
+		servers = append(servers, fmt.Sprintf("host-%02d", i))
+	}
+	streamer := &fakeLogStreamer{streams: []collect.LogStream{{
+		Lines:  make(chan string, 1),
+		Errors: make(chan error, 1),
+		Close:  func() error { return nil },
+	}}}
+	for _, size := range [][2]int{{120, 24}, {80, 24}} {
+		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
+			m := Model{
+				screen:    screenFleet,
+				snapshot:  snapshotWithServers(servers...),
+				logSource: streamer,
+				logs:      newLogsScreen(),
+				fleet:     newFleetModel(),
+				selected:  27,
+			}
+			m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			opened, _ := updateModel(t, m, key("l"))
+			for i := range 6 {
+				opened.logs.buffer.Append(fmt.Sprintf("19:41:0%d info строка", i))
+			}
+
+			// When: кадр отрисован.
+			view := opened.View()
+
+			// Then: в кадре и выделенная строка, и её ящик, и кадр по высоте.
+			if lines := strings.Split(view, "\n"); len(lines) != size[1] {
+				t.Fatalf("кадр в %d строк при высоте %d:\n%s", len(lines), size[1], view)
+			}
+			if !strings.Contains(view, "host-27") || !strings.Contains(view, fleetMarker) {
+				t.Fatalf("выделенная строка уехала за край:\n%s", view)
+			}
+			if !strings.Contains(view, "ЛОГИ · host-27") || !strings.Contains(view, "19:41:05") {
+				t.Fatalf("ящик выехал за край вместе с логами:\n%s", view)
+			}
+		})
+	}
+}
+
 func TestFleetLogboxEnterGoesFullScreen(t *testing.T) {
 	// Given: the fleet screen with an open log drawer.
 	m, _ := logboxTestModel()
@@ -76,7 +174,7 @@ func TestFleetLogboxEnterGoesFullScreen(t *testing.T) {
 }
 
 func TestFleetLogboxLeavesGlobalKeysToTheGlobalHandler(t *testing.T) {
-	// Given: открытый ящик логов над списком хостов.
+	// Given: открытый ящик логов под выбранной строкой списка.
 	m, _ := logboxTestModel()
 	opened, _ := updateModel(t, m, key("l"))
 

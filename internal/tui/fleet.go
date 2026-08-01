@@ -86,16 +86,24 @@ func fleetRowStyle(selected bool) lipgloss.Style {
 	return dimStyle
 }
 
-func fleetScroll(selectedRow, height, total int) int {
+// fleetScroll — окно списка вокруг выделенной строки. span — сколько строк
+// занимает выделенное вместе с врезанным под ним блоком (карточка или ящик
+// логов): центрируем блок целиком, иначе он вылезал бы за нижний край. Если
+// блок в окно не влезает вовсе, строка встаёт наверх окна — потерять её нельзя,
+// потерять хвост блока можно.
+func fleetScroll(selectedRow, span, height, total int) int {
 	if total <= height {
 		return 0
 	}
-	scroll := selectedRow - height/2
-	if scroll < 0 {
-		scroll = 0
-	}
+	scroll := selectedRow - max(0, (height-max(1, span))/2)
 	if scroll > total-height {
 		scroll = total - height
+	}
+	if scroll > selectedRow {
+		scroll = selectedRow
+	}
+	if scroll < 0 {
+		scroll = 0
 	}
 	return scroll
 }
@@ -130,11 +138,12 @@ const (
 	// контекста области видимости и строка подсказок внизу.
 	fleetFixedLines = 3
 	// fleetListMin — сколько строк список хостов удерживает за собой при любой
-	// тесноте: рамка панели и две строки. Плитки групп и ящик логов ужимаются
-	// до него, а не за его счёт — под ящиком в макете 3d всегда видны хосты.
+	// тесноте: рамка панели и две строки. Плитки групп ужимаются до него, а не
+	// за его счёт.
 	fleetListMin = panelOverhead + 2
 	// fleetLogboxMin — минимальная высота ящика логов: рамка, строка состояния
-	// и одна строка лога.
+	// и одна строка лога. Ящик врезан в список, поэтому это добавка к минимуму
+	// самого списка, а не отдельная доля экрана.
 	fleetLogboxMin = panelOverhead + 2
 )
 
@@ -142,35 +151,33 @@ func (m Model) renderFleet() string {
 	m.ensureFleet()
 	width := m.layout.width
 	// Высота делится честно: сумма частей обязана уложиться в терминал, иначе
-	// composeScreen срежет низ последней панели вместе с её рамкой. Уступают по
-	// приоритету — сначала плитки групп, затем ящик логов, список хостов не
-	// исчезает никогда.
+	// composeScreen срежет низ последней панели вместе с её рамкой. Первыми
+	// уступают плитки групп, список хостов не исчезает никогда.
 	budget := max(fleetListMin, m.layout.height-fleetFixedLines)
-	logboxReserve := 0
+	// С открытым ящиком список держит за собой и его минимальную высоту: ящик
+	// врезан в список, и без этой добавки плитки групп срезали бы ему рамку.
+	listMin := fleetListMin
 	if m.fleet.logbox {
-		logboxReserve = fleetLogboxMin
+		listMin += fleetLogboxMin
 	}
 	head := []string{m.fleetHeader(width)}
 	// Плитки групп и две колонки — вопрос ширины, а не отдельного режима:
 	// состав экрана флота один и тот же, ужимается только раскладка.
 	if m.layout.twoColumn() {
-		if tiles := m.fleetGroupBox(width); len(tiles) <= budget-fleetListMin-logboxReserve {
+		if tiles := m.fleetGroupBox(width); len(tiles) <= budget-listMin {
 			head = append(head, tiles...)
 			budget -= len(tiles)
 		}
 	}
 	visible := len(groupedServers(m.snapshot, m.configServers(), m.fleet.filter))
 	head = append(head, m.fleetContextLine(visible, m.fleetGroupTotal(), width))
-	logbox := m.fleetLogboxLines(width, budget-fleetListMin)
-	head = append(head, logbox...)
-	budget -= len(logbox)
 	if m.layout.twoColumn() {
 		head = append(head, strings.Split(m.renderFleetColumns(budget), "\n")...)
 	} else {
 		// Прокрутка нужна и здесь: ниже 100 колонок это единственная раскладка
 		// списка, и без окна выделенная строка уезжает за нижний край кадра.
-		listLines, selectedRow := m.fleetListLines(width)
-		head = append(head, fitPanelHeight(listLines, budget, fleetScroll(selectedRow, budget, len(listLines)))...)
+		listLines, selectedRow, span := m.fleetListLines(width, budget-1)
+		head = append(head, fitPanelHeight(listLines, budget, fleetScroll(selectedRow, span, budget, len(listLines)))...)
 	}
 	return strings.Join(append(head, m.fleetFooter()), "\n")
 }
@@ -198,16 +205,16 @@ func (m Model) renderFleetColumns(budget int) string {
 	// сайдбар уступает ей место (макет 3b): иначе те же детали рисуются дважды,
 	// а карточка ужимается в узкую левую колонку.
 	if m.fleet.expanded || !m.fleet.preview {
-		listLines, selectedRow := m.fleetListLines(m.layout.width - 4)
-		scroll := fleetScroll(selectedRow, contentH, len(listLines))
+		listLines, selectedRow, span := m.fleetListLines(m.layout.width-4, contentH-1)
+		scroll := fleetScroll(selectedRow, span, contentH, len(listLines))
 		full := panelBoxStyled("СЕРВЕРЫ", "", m.layout.width,
 			fitPanelHeight(listLines, contentH, scroll), dimStyle)
 		return strings.Join(full, "\n")
 	}
 	rightW := max(30, m.layout.width/4)
 	leftW := m.layout.width - rightW - 2
-	listLines, selectedRow := m.fleetListLines(leftW - 4)
-	scroll := fleetScroll(selectedRow, contentH, len(listLines))
+	listLines, selectedRow, span := m.fleetListLines(leftW-4, contentH-1)
+	scroll := fleetScroll(selectedRow, span, contentH, len(listLines))
 	left := panelBoxStyled("СЕРВЕРЫ", "", leftW,
 		fitPanelHeight(listLines, contentH, scroll), dimStyle)
 	right := panelBoxStyled(m.fleetDetailTitle(), "", rightW,
@@ -215,24 +222,29 @@ func (m Model) renderFleetColumns(budget int) string {
 	return joinBoxes(left, right)
 }
 
-func (m Model) fleetListLines(width int) ([]string, int) {
+// fleetListLines собирает строки списка. boxHeight — сколько строк остаётся под
+// врезанный блок выбранного хоста. Кроме строк возвращает номер выделенной
+// строки и span — её высоту вместе с блоком: по ним считается прокрутка окна.
+func (m Model) fleetListLines(width, boxHeight int) ([]string, int, int) {
 	visible := groupedServers(m.snapshot, m.configServers(), m.fleet.filter)
 	cols := fleetColumnLayout(width, m.fleet.expanded)
 	lines := []string{dimStyle.Render(cols.header())}
-	selectedRow := 0
+	selectedRow, span := 0, 1
 	previousGroup := ""
 	for _, index := range visible {
 		if group := m.snapshot.Servers[index].Group; group != "" && group != previousGroup {
 			lines = append(lines, titleStyle.Render(group))
 			previousGroup = group
 		}
-		if index == m.selected {
-			selectedRow = len(lines)
+		if index != m.selected {
+			lines = append(lines, m.renderFleetRow(index, cols))
+			continue
 		}
+		selectedRow = len(lines)
 		lines = append(lines, m.renderFleetRow(index, cols))
-		if index == m.selected && m.fleet.expanded {
-			lines = append(lines, m.fleetCardLines(m.snapshot.Servers[index], width)...)
-		}
+		inset := m.fleetInsetLines(m.snapshot.Servers[index], width, boxHeight)
+		lines = append(lines, inset...)
+		span = 1 + len(inset)
 	}
 	if len(visible) == 0 {
 		lines = append(lines, dimStyle.Render("  серверы не найдены"))
@@ -240,7 +252,21 @@ func (m Model) fleetListLines(width int) ([]string, int) {
 	if note := m.fleetHiddenNote(len(visible), m.fleetGroupTotal()); note != "" {
 		lines = append(lines, note)
 	}
-	return lines, selectedRow
+	return lines, selectedRow, span
+}
+
+// fleetInsetLines — блок, врезанный в список сразу под выбранной строкой.
+// Ящик логов и раскрытая карточка занимают одно и то же место, поэтому при обоих
+// включённых режимах показываем ящик: его открывают последним и именно к нему
+// уходят ↑↓, а детали хоста всё равно видны в сайдбаре и на экране сервера.
+func (m Model) fleetInsetLines(server collect.Metrics, width, height int) []string {
+	if m.fleet.logbox {
+		return m.fleetLogboxLines(width, height)
+	}
+	if m.fleet.expanded {
+		return m.fleetCardLines(server, width)
+	}
+	return nil
 }
 
 const (

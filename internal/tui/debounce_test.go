@@ -50,7 +50,7 @@ func TestFleetSidebarProcessRequestsAreDebounced(t *testing.T) {
 }
 
 func TestFleetLogboxRapidMovementOpensOneStream(t *testing.T) {
-	// Given: открытый ящик логов над списком из четырёх хостов.
+	// Given: открытый ящик логов под выбранной строкой списка из четырёх хостов.
 	streamer := &fakeLogStreamer{streams: []collect.LogStream{
 		{Lines: make(chan string, 1), Errors: make(chan error, 1), Close: func() error { return nil }},
 		{Lines: make(chan string, 1), Errors: make(chan error, 1), Close: func() error { return nil }},

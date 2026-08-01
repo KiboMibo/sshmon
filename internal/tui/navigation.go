@@ -146,7 +146,7 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "l", "ctrl+l":
 		if m.screen == screenFleet {
-			// На списке хостов «l» — ящик логов над списком (отдельная фича),
+			// На списке хостов «l» — ящик логов под выбранной строкой,
 			// на весь экран уходим из раскрытой карточки или по ctrl+l.
 			if m.fleet.expanded || value == "ctrl+l" {
 				return m.openFromFleet(screenLogs)
