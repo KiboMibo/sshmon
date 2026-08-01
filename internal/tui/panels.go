@@ -73,7 +73,7 @@ func seriesRange(values []*float64) (low, high float64) {
 }
 
 const (
-	metricRowLabelWidth   = 7  // «DISK» плюс отбивка до спарклайна, как в макете
+	metricRowLabelWidth   = 7  // «DISK» плюс отбивка до тренда, как в макете
 	metricRowPercentWidth = 4  // «100%»
 	metricRowSparkMax     = 30 // шире тренд не читается лучше, остаток отдаём деталям
 
@@ -83,18 +83,28 @@ const (
 	metricNoPercent = -1.0
 )
 
+// metricTrend рисует ячейку колонки тренда в заданную ширину. Ширину считает
+// metricRow (она зависит от общей ширины строки), поэтому вызывающий передаёт
+// не готовую строку, а способ её нарисовать: заливку gauge, спарклайн истории
+// или ничего (nil — колонка остаётся пустой, но ширину держит).
+type metricTrend func(width int) string
+
 // metricRow рисует одну строку сетки метрик экрана сервера:
-// «МЕТКА  <спарклайн>  <NN%>  <детали>». Ширины колонок выводятся из общей
+// «МЕТКА  <тренд>  <NN%>  <детали>». Ширины колонок выводятся из общей
 // ширины, поэтому строки CPU/MEM/NET/DISK с одинаковым width выравниваются
 // друг под другом без расчётов на стороне вызывающего.
-func metricRow(label string, series []*float64, percent float64, details string, width int) string {
+func metricRow(label string, trend metricTrend, percent float64, details string, width int) string {
 	const gap = "  "
 	fixed := metricRowLabelWidth + metricRowPercentWidth + 3*len(gap)
-	sparkWidth := min(metricRowSparkMax, max(0, width-fixed)/2)
-	detailsWidth := width - fixed - sparkWidth
+	trendWidth := min(metricRowSparkMax, max(0, width-fixed)/2)
+	detailsWidth := width - fixed - trendWidth
 
+	cell := strings.Repeat(" ", trendWidth)
+	if trend != nil {
+		cell = trend(trendWidth)
+	}
 	row := padLabel(truncateCells(label, metricRowLabelWidth), metricRowLabelWidth) +
-		gap + historySparkline(series, sparkWidth) +
+		gap + cell +
 		gap + metricPercentCell(percent)
 	if details != "" && detailsWidth > 0 {
 		// fitLine, а не truncateCells: детали приходят цветными (load, swap, rx),
@@ -105,7 +115,9 @@ func metricRow(label string, series []*float64, percent float64, details string,
 }
 
 func metricPercentCell(percent float64) string {
-	if percent < 0 {
+	// NaN приходит из деления на нулевой итог (пустой /proc, диск нулевого
+	// размера): «%3.0f» напечатал бы «NaN%» — на ячейку шире, и сетка съехала бы.
+	if math.IsNaN(percent) || percent < 0 {
 		return strings.Repeat(" ", metricRowPercentWidth)
 	}
 	value := min(100, percent)

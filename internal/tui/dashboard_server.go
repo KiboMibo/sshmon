@@ -19,18 +19,27 @@ const (
 	// состоянием хвоста, поэтому «минимум одна строка лога» — это четыре.
 	minLogsHeight = panelOverhead + 2
 
-	serverFooterHints      = "esc назад · p процессы · h история · x ssh · r обновить · ctrl+r переподключить · ? ещё"
+	// serverFooterHints — список клавиш из макета. Короткий вариант для узких
+	// терминалов — его подмножество, а не другой набор: клавиша не должна
+	// менять смысл от ширины окна. «h история» и «ctrl+r переподключить»
+	// живут в справке «?», в статусбар они по макету не входят.
+	serverFooterHints      = "esc назад · d контейнеры · p процессы · l логи · x ssh · r обновить · ? ещё"
 	serverFooterHintsShort = "esc назад · p процессы · l логи · x ssh · r обновить · ? ещё"
+
+	// maxIssueRows — потолок высоты плитки ПРОБЛЕМЫ. Несколько заполненных
+	// дисков или многострочный stderr от ssh иначе разворачивались бы на
+	// пол-экрана, обнуляли бюджет тела и срезали сетку метрик.
+	maxIssueRows = 3
 )
 
 func (m Model) serverScreenLines(server collect.Metrics) []string {
 	width := m.layout.width
 	lines := []string{m.serverHeader(server, width)}
 	if len(issuesForServer(m.snapshot.Issues, server.Name)) > 0 {
-		lines = append(lines, panelBox("ПРОБЛЕМЫ", "r обновить · ctrl+r переподключить", width, wrapWords(m.dashboardIssueText(server.Name), width-4))...)
+		lines = append(lines, panelBox("ПРОБЛЕМЫ", "r обновить · ctrl+r переподключить", width, issueRows(m.dashboardIssueText(server.Name), width-4))...)
 	}
 	lines = append(lines, "")
-	lines = append(lines, serverMetricGrid(server, width)...)
+	lines = append(lines, serverMetricGrid(server, m.cpuTrends[server.Name], width)...)
 	lines = append(lines, "")
 
 	// Честный остаток: сколько строк реально осталось под средний ряд и логи
@@ -39,6 +48,17 @@ func (m Model) serverScreenLines(server collect.Metrics) []string {
 	body, truncated := m.serverBody(server, width, budget)
 	lines = append(lines, body...)
 	return append(lines, m.serverFooter(server, width, truncated))
+}
+
+// issueRows сворачивает список проблем в плитку не выше maxIssueRows строк.
+// Последняя видимая строка уступает место счётчику: неполный список должен
+// быть виден как неполный, иначе часть проблем пропадает молча.
+func issueRows(text string, width int) []string {
+	rows := wrapWords(text, width)
+	if len(rows) <= maxIssueRows {
+		return rows
+	}
+	return append(rows[:maxIssueRows-1], dimStyle.Render(fmt.Sprintf("… ещё строк: %d", len(rows)-maxIssueRows+1)))
 }
 
 // serverBody собирает средний ряд (DOCKER · СЕРВИСЫ · ПОРТЫ) и плитку логов
@@ -75,8 +95,11 @@ func (m Model) serverBodyColumns(server collect.Metrics, width, budget int, unit
 		desired = max(desired, len(dockerRows)+panelOverhead)
 	}
 	// Ряд берёт столько, сколько нужно содержимому, но не больше половины
-	// остатка: по макету низ экрана принадлежит логам.
-	limit := max(minPanelHeight, min(budget-minLogsHeight, budget/2))
+	// остатка: по макету низ экрана принадлежит логам. Половина уступает паре
+	// плиток (СЕРВИСЫ + ПОРТЫ), иначе на бюджете 10–11 строк потолок budget/2
+	// отнимал ПОРТЫ там, где логам всё равно оставалось с запасом. Верхняя
+	// граница budget-minLogsHeight сохраняет логам их минимум при любом раскладе.
+	limit := min(budget-minLogsHeight, max(2*minPanelHeight, budget/2))
 	rowHeight := max(minPanelHeight, min(desired, limit))
 
 	// Порты — отдельная плитка под СЕРВИСАМИ: обе с рамками, поэтому в ряд
@@ -112,7 +135,9 @@ func (m Model) serverBodyStacked(server collect.Metrics, width, budget int, unit
 
 	// Каждая плитка получает желаемую высоту, но не за счёт чужого минимума:
 	// иначе длинный список юнитов съедал бы ряд целиком. Первый резерв —
-	// под логи, они по макету занимают остаток.
+	// под логи, они по макету занимают остаток. Порядок деградации тот же,
+	// что в колонках: первыми уходят ПОРТЫ, поэтому DOCKER берёт нужное ему
+	// целиком, а ПОРТЫ довольствуются остатком.
 	free := budget - minLogsHeight
 	dockerReserve := 0
 	if docker {
@@ -123,7 +148,7 @@ func (m Model) serverBodyStacked(server collect.Metrics, width, budget int, unit
 
 	dockerHeight, truncated := 0, false
 	if docker {
-		dockerHeight = min(len(dockerRows)+panelOverhead, free-minPanelHeight)
+		dockerHeight = min(len(dockerRows)+panelOverhead, free)
 		if dockerHeight < minPanelHeight {
 			dockerHeight, truncated = 0, true
 		}
@@ -228,7 +253,22 @@ func (m Model) serverFooter(server collect.Metrics, width int, truncated bool) s
 
 func (m Model) serverHeader(server collect.Metrics, width int) string {
 	name := titleStyle.Render(server.Name) + "  " + serverStateText(server, m.snapshot.Issues)
-	return spread(name, dimStyle.Render(serverFacts(server)), width)
+	// Факты ужимаются до spread: тот при нехватке места возвращает только
+	// левую часть, и на минимальных 60 колонках из шапки исчезали разом ОС,
+	// ядра, память и uptime. Усечённый хвост полезнее пустой правой половины.
+	facts := fitLine(dimStyle.Render(serverFacts(server, m.serverAddress(server.Name))), width-lipgloss.Width(name)-1)
+	return spread(name, facts, width)
+}
+
+// serverAddress — адрес сервера из конфига: в шапке макета стоит 10.2.4.18,
+// то есть то, куда реально ходит ssh.
+func (m Model) serverAddress(name string) string {
+	for _, server := range m.configServers() {
+		if server.Name == name {
+			return server.Host
+		}
+	}
+	return ""
 }
 
 // serverStateText — тот же словарь состояний, что на экране флота: «норма»,
@@ -246,9 +286,16 @@ func serverStateText(server collect.Metrics, issues []collect.Issue) string {
 	return goodStyle.Render("● норма")
 }
 
-func serverFacts(server collect.Metrics) string {
+func serverFacts(server collect.Metrics, address string) string {
 	facts := make([]string, 0, 6)
-	for _, fact := range []string{server.Group, server.Hostname, server.OS} {
+	// Адрес важнее hostname: по нему сервер и находят, а самоназвание хоста
+	// почти всегда повторяет имя из конфига слева в той же строке. Hostname
+	// остаётся запасным вариантом, когда адреса в конфиге нет.
+	host := address
+	if host == "" {
+		host = server.Hostname
+	}
+	for _, fact := range []string{server.Group, host, server.OS} {
 		if fact != "" {
 			facts = append(facts, fact)
 		}

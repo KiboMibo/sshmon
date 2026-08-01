@@ -39,6 +39,7 @@ type Model struct {
 	overlayState        overlayState
 	connections         connectionManager
 	reconnectGeneration uint64
+	cpuTrends           map[string][]*float64
 
 	events      <-chan collect.Event
 	unsubscribe func()
@@ -71,6 +72,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		previousMinute := m.snapshot.Time.Truncate(time.Minute)
 		m.snapshot = msg.event.Snapshot
 		m.clampSelection()
+		m.recordCPUTrend()
 		if m.screen == screenHistory && !m.snapshot.Time.Truncate(time.Minute).Equal(previousMinute) {
 			return m, tea.Batch(waitEvent(m.events), m.startHistoryQuery())
 		}

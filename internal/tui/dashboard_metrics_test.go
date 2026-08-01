@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/kibomibo/sshmon/internal/collect"
 )
 
@@ -33,27 +35,132 @@ func TestLoadColorStyleScalesWithNumCPU(t *testing.T) {
 	}
 }
 
-// TestLoadColorStyleBoundaryCases — Given exact boundary load values,
-// When loadColorStyle classifies them, Then boundary inclusive on low side.
-func TestLoadColorStyleBoundaryCases(t *testing.T) {
-	// Given NumCPU=2 (thresholds: green<1.5, yellow 1.5–3.0, red>3.0)
+// TestLoadStyleBoundaryCases — Дано: значения ровно на границах порогов;
+// Когда: выбирается стиль числа load; Тогда: границы принадлежат нижнему цвету.
+// Сравнивается цвет стиля, а не отрисованная строка: под go test у lipgloss
+// профиль Ascii и ANSI-кодов в выводе нет.
+func TestLoadStyleBoundaryCases(t *testing.T) {
+	// Дано: NumCPU=2 (пороги: зелёный <1.5, жёлтый 1.5–3.0, красный >3.0).
 	const numCPU = 2
 
 	for _, tc := range []struct {
 		name string
 		load float64
+		want lipgloss.Style
 	}{
-		{"at green/yellow boundary (0.75×)", 1.5},
-		{"at yellow/red boundary (1.5×)", 3.0},
-		{"just under yellow/red (1.49×)", 2.98},
-		{"zero load", 0.0},
+		{"нулевая загрузка", 0.0, goodStyle},
+		{"под нижней границей (0.74×)", 1.49, goodStyle},
+		{"ровно на 0.75×", 1.5, warnStyle},
+		{"ровно на 1.5×", 3.0, warnStyle},
+		{"чуть выше 1.5×", 3.01, criticalStyle},
+		{"без данных о ядрах", 4.0, criticalStyle},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// When/Then: любая граница даёт непустую подписанную величину.
-			if got := loadColorStyle(tc.load, numCPU); got == "" {
-				t.Fatalf("expected non-empty styled load for %s", tc.name)
+			cpus := numCPU
+			if tc.name == "без данных о ядрах" {
+				cpus = 0 // NumCPU<1 трактуется как одно ядро
+			}
+			if got := loadStyle(tc.load, cpus); got.GetForeground() != tc.want.GetForeground() {
+				t.Fatalf("loadStyle(%v, %d) цвет = %v, ожидался %v", tc.load, cpus, got.GetForeground(), tc.want.GetForeground())
 			}
 		})
+	}
+
+	// И: отрисованное значение по-прежнему несёт саму величину.
+	if got := loadColorStyle(1.5, numCPU); !strings.Contains(got, "1.50") {
+		t.Fatalf("loadColorStyle потерял величину: %q", got)
+	}
+}
+
+// TestServerMetricGridTrendCellPerMetric — Дано: сервер с памятью, диском и
+// коротким рядом CPU; Когда: рисуется сетка метрик; Тогда: у каждой строки
+// своя колонка тренда из макета — спарклайн, заливка, заливка, пусто.
+func TestServerMetricGridTrendCellPerMetric(t *testing.T) {
+	// Дано: три точки CPU, память 50% и диск 78%.
+	server := collect.Metrics{
+		NumCPU: 4, CPUPct: 20, MemTotalKB: 16 << 20, MemAvailKB: 8 << 20, MemPct: 50,
+		Disks: []collect.DiskUsage{{Fs: "/dev/sda2", Mount: "/", TotalKB: 49 << 20, UsedKB: 38 << 20, UsedPct: 78}},
+	}
+	low, high, mid := 10.0, 40.0, 20.0
+	series := []*float64{&low, &high, &mid}
+
+	// Когда: сетка рисуется на широком терминале.
+	rows := serverMetricGrid(server, series, 120)
+
+	// Тогда: у CPU спарклайн, у MEM и DISK заливка, у NET колонка пуста.
+	if !strings.ContainsAny(rows[0], "▁▂▃▄▅▆▇") {
+		t.Fatalf("у CPU нет спарклайна тренда: %q", rows[0])
+	}
+	for index, row := range map[int]string{1: rows[1], 3: rows[3]} {
+		if !strings.Contains(row, "█") || !strings.Contains(row, "░") {
+			t.Fatalf("строка %d не заливка текущего процента: %q", index, row)
+		}
+	}
+	if strings.ContainsAny(rows[2], "█░─▁▂▃▄▅▆▇") {
+		t.Fatalf("у NET колонка тренда должна быть пустой: %q", rows[2])
+	}
+	// Тогда: мёртвой сплошной черты нет ни в одной строке.
+	for index, row := range rows {
+		if strings.Contains(row, "─") {
+			t.Fatalf("строка %d рисует сплошную черту вместо тренда: %q", index, row)
+		}
+	}
+}
+
+// TestServerMetricGridSurvivesShortCPUSeries — Дано: ряд CPU пуст или в одну
+// точку (первые тики после старта); Когда: рисуется сетка; Тогда: ничего не
+// ломается, а пустой ряд даёт пустую колонку, а не сплошную черту.
+func TestServerMetricGridSurvivesShortCPUSeries(t *testing.T) {
+	server := collect.Metrics{NumCPU: 2, CPUPct: 12, MemPct: 30}
+	single := 12.0
+
+	empty := serverMetricGrid(server, nil, 100)
+	if strings.ContainsAny(empty[0], "─█░▁▂▃▄▅▆▇") {
+		t.Fatalf("пустой ряд CPU должен давать пустую колонку: %q", empty[0])
+	}
+	one := serverMetricGrid(server, []*float64{&single}, 100)
+	if !strings.Contains(one[0], "▁") {
+		t.Fatalf("ряд в одну точку не нарисован: %q", one[0])
+	}
+	// И: пропуск (сервер был offline) не роняет отрисовку.
+	gap := serverMetricGrid(server, []*float64{nil, &single}, 100)
+	if len(gap) != 4 {
+		t.Fatalf("сетка из %d строк, ожидалось 4", len(gap))
+	}
+}
+
+// TestRecordCPUTrendKeepsBoundedSeriesPerServer — Дано: поток снапшотов;
+// Когда: Model копит тренд CPU; Тогда: ряд ограничен по длине, а ряды
+// исчезнувших серверов не остаются в памяти.
+func TestRecordCPUTrendKeepsBoundedSeriesPerServer(t *testing.T) {
+	// Дано: два сервера, один из которых offline.
+	m := Model{}
+	for range cpuTrendPoints + 10 {
+		m.snapshot = collect.Snapshot{Servers: []collect.Metrics{
+			{Name: "web", Online: true, CPUPct: 25},
+			{Name: "db", Online: false, CPUPct: 99},
+		}}
+		m.recordCPUTrend()
+	}
+
+	// Тогда: длина ряда ограничена кольцом, а offline даёт пропуск.
+	if got := len(m.cpuTrends["web"]); got != cpuTrendPoints {
+		t.Fatalf("ряд web длиной %d, ожидалось %d", got, cpuTrendPoints)
+	}
+	if point := m.cpuTrends["web"][cpuTrendPoints-1]; point == nil || *point != 25 {
+		t.Fatalf("последняя точка web = %v, ожидалось 25", point)
+	}
+	if point := m.cpuTrends["db"][cpuTrendPoints-1]; point != nil {
+		t.Fatalf("offline-сервер должен давать пропуск, получено %v", *point)
+	}
+
+	// Когда: сервер пропал из снапшота.
+	m.snapshot = collect.Snapshot{Servers: []collect.Metrics{{Name: "web", Online: true, CPUPct: 30}}}
+	m.recordCPUTrend()
+
+	// Тогда: его ряд не переносится в новую карту.
+	if _, ok := m.cpuTrends["db"]; ok {
+		t.Fatal("ряд исчезнувшего сервера остался в памяти")
 	}
 }
 

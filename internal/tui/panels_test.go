@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -147,9 +148,10 @@ func assertCompleteEscapes(t *testing.T, value string) {
 func TestMetricRowAlignsColumnsAtBoundaryWidths(t *testing.T) {
 	// Дано: две строки сетки с разными метками и деталями.
 	value := 10.0
+	series := []*float64{&value}
 	for _, width := range []int{60, 100} {
-		cpu := metricRow("CPU", []*float64{&value}, 5, "ДЕТАЛИcpu", width)
-		mem := metricRow("ПАМЯТЬ", []*float64{&value}, 50, "ДЕТАЛИmem", width)
+		cpu := metricRow("CPU", func(w int) string { return historySparkline(series, w) }, 5, "ДЕТАЛИcpu", width)
+		mem := metricRow("ПАМЯТЬ", func(w int) string { return gauge(50, w) }, 50, "ДЕТАЛИmem", width)
 
 		// Когда/тогда: обе укладываются в ширину и делят одну левую границу деталей.
 		for _, row := range []string{cpu, mem} {
@@ -164,12 +166,12 @@ func TestMetricRowAlignsColumnsAtBoundaryWidths(t *testing.T) {
 }
 
 func TestMetricRowRendersPlaceholderAndFullPercent(t *testing.T) {
-	// Дано: нет данных для тренда и загрузка выше 99%.
+	// Дано: тренда у строки нет вовсе и загрузка выше 99%.
 	row := metricRow("ДИСК", nil, 100, "", 60)
 
-	// Тогда: заглушка тренда на месте, а колонка процента не расползлась.
-	if !strings.Contains(row, "─") {
-		t.Fatalf("metricRow lost the empty-series placeholder: %q", row)
+	// Тогда: колонка тренда пуста (мёртвой черты нет), а процент не расползся.
+	if strings.ContainsAny(row, "─█░▁") {
+		t.Fatalf("колонка тренда без тренда должна быть пустой: %q", row)
 	}
 	if !strings.Contains(row, "100%") {
 		t.Fatalf("metricRow lost the percent column: %q", row)
@@ -177,13 +179,20 @@ func TestMetricRowRendersPlaceholderAndFullPercent(t *testing.T) {
 	if lipgloss.Width(row) > 60 {
 		t.Fatalf("metricRow width = %d, want <= 60: %q", lipgloss.Width(row), row)
 	}
+	// И: NaN (пустой /proc, раздел нулевого размера) не печатается: «NaN%» на
+	// ячейку шире «100%» сдвинул бы всю сетку.
+	nan := metricRow("ДИСК", nil, math.NaN(), "", 60)
+	if strings.Contains(nan, "NaN") || lipgloss.Width(nan) != lipgloss.Width(row) {
+		t.Fatalf("NaN просочился в колонку процента: %q", nan)
+	}
 }
 
 func TestMetricRowLeavesPercentColumnEmptyWithoutScale(t *testing.T) {
 	// Дано: у NET процента нет (байты/с), у CPU — есть.
 	value := 10.0
-	net := metricRow("NET", []*float64{&value}, metricNoPercent, "rx 1.2M/s", 80)
-	cpu := metricRow("CPU", []*float64{&value}, 16, "load 1.19", 80)
+	series := []*float64{&value}
+	net := metricRow("NET", nil, metricNoPercent, "rx 1.2M/s", 80)
+	cpu := metricRow("CPU", func(w int) string { return historySparkline(series, w) }, 16, "load 1.19", 80)
 
 	// Тогда: колонка процента у NET пустая, но ширину держит — детали обеих
 	// строк начинаются в одной колонке.
