@@ -94,6 +94,9 @@ func (l *logsScreen) ensure() {
 	initialized := newLogsScreen()
 	if l.buffer == nil {
 		l.buffer = initialized.buffer
+		// Зеро-значение экрана: выделения ещё не было, иначе нулевой cursor
+		// подсветил бы первую строку сам собой.
+		l.cursor = initialized.cursor
 	}
 	if len(l.sources) == 0 {
 		l.sources = initialized.sources
