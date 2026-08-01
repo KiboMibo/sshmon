@@ -1,6 +1,9 @@
 package collect
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // SanitizeLine вычищает одну строку текста, пришедшего с удалённого хоста.
 //
@@ -19,7 +22,11 @@ import "strings"
 // стилизация приложения (подсветка фильтра, цвета уровней, маркер выделения)
 // накладывается уже поверх — она добавляется на этапе рендера, то есть после.
 func SanitizeLine(line string) string {
-	if strings.IndexFunc(line, unsafeControl) < 0 {
+	// Быстрый путь для обычной строки лога — их десять тысяч в буфере. Битую
+	// UTF-8 он пропускать не должен: одиночный байт 0x9b — это CSI, и терминал в
+	// однобайтовой локали разберёт его как начало последовательности. Перегон
+	// через []rune ниже заменяет такой байт на U+FFFD.
+	if utf8.ValidString(line) && strings.IndexFunc(line, unsafeControl) < 0 {
 		return line
 	}
 	runes := []rune(line)

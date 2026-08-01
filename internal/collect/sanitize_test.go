@@ -22,6 +22,7 @@ func TestSanitizeLineStripsTerminalControlSequences(t *testing.T) {
 		{"line breaks become spaces", "a\r\nb", "a  b"},
 		{"bare controls are dropped", "a\x00\x08b\x7f", "ab"},
 		{"unicode survives", "юникод ✓", "юникод ✓"},
+		{"raw c1 byte becomes a replacement rune", "a\x9bm", "a\ufffdm"},
 	}
 
 	// When/Then: санитизация оставляет текст и убирает всё управляющее.
