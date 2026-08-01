@@ -28,11 +28,18 @@ func (m *Model) startFleetCardUnits() tea.Cmd {
 
 func (m *Model) moveFleetBy(delta int) tea.Cmd {
 	m.ensureFleet()
+	previous := m.selectedName()
 	m.moveFleet(delta)
-	if !m.fleet.expanded {
+	if m.fleet.expanded {
+		return m.startFleetCardUnits()
+	}
+	// Запрос строго по факту смены хоста: удержанная стрелка иначе слала бы по
+	// SSH-команде на каждое движение курсора, а упёршийся в край список — на
+	// каждое нажатие.
+	if m.selectedName() == previous {
 		return nil
 	}
-	return m.startFleetCardUnits()
+	return m.startFleetTopProcesses()
 }
 
 func (m Model) openFromFleet(kind screenKind) (tea.Model, tea.Cmd) {
