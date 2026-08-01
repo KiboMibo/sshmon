@@ -23,6 +23,10 @@ type serverState struct {
 	m      Metrics
 	prev   *counters
 	os     string // дистрибутив: спрашиваем один раз, он не меняется
+	// osProbed — зонд /etc/os-release уже отправляли. Пустой os не годится как
+	// признак: на busybox/OpenWrt и в части контейнеров файла нет, и по нему
+	// лишняя секция уходила бы в каждом сэмпле.
+	osProbed bool
 }
 
 type Collector struct {
@@ -111,10 +115,10 @@ func (c *Collector) poll(ctx context.Context, st *serverState) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	c.mu.Lock()
-	knownOS := st.os
+	probeOS := !st.osProbed
 	c.mu.Unlock()
 	cmd := sampleCmd
-	if knownOS == "" {
+	if probeOS {
 		cmd = sampleCmdWithOS
 	}
 	raw, err := st.runner.RunContext(ctx, cmd)
@@ -126,6 +130,11 @@ func (c *Collector) poll(ctx context.Context, st *serverState) error {
 		return err
 	}
 	s := parseSample(raw, now)
+	// Зонд отработал: повторять его нельзя даже с пустым результатом — файла
+	// может просто не быть, и тогда мы слали бы лишнюю секцию вечно.
+	if probeOS {
+		st.osProbed = true
+	}
 	if s.os != "" {
 		st.os = s.os
 	}

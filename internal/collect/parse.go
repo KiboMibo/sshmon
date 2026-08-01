@@ -20,9 +20,9 @@ const sampleCmd = `echo @@HOST; hostname 2>/dev/null; ` +
 	`echo @@PORTS; ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null; ` +
 	`echo @@DOCKER; docker ps -a --format '{{.Status}}' 2>/dev/null`
 
-// sampleCmdWithOS — тот же сэмпл плюс /etc/os-release. Шлём его, только пока
-// дистрибутив сервера неизвестен: он не меняется, а лишний cat на каждом тике
-// не нужен. Обе команды — константы, подстановки в них нет.
+// sampleCmdWithOS — тот же сэмпл плюс /etc/os-release. Шлём его один раз на
+// сервер: дистрибутив не меняется, а лишний cat на каждом тике не нужен — в том
+// числе там, где файла нет вовсе. Обе команды — константы, подстановки в них нет.
 const sampleCmdWithOS = sampleCmd + `; echo @@OS; cat /etc/os-release 2>/dev/null`
 
 // counters — сырые счётчики одного сэмпла; скорости считаются по двум сэмплам.

@@ -18,11 +18,13 @@ type fakePollRunner struct {
 	err        error
 	resetCalls int
 	passphrase []byte
+	commands   []string
 }
 
-func (f *fakePollRunner) RunContext(context.Context, string) (string, error) {
+func (f *fakePollRunner) RunContext(_ context.Context, command string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.commands = append(f.commands, command)
 	return f.output, f.err
 }
 
