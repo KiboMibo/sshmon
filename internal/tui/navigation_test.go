@@ -100,20 +100,29 @@ func TestFleetSidebarLoadsTopProcessesWhenShown(t *testing.T) {
 	// When: сайдбар включают клавишей «v».
 	shown, cmd := updateModel(t, m, key("v"))
 
-	// Then: процессы выбранного хоста уже запрошены, а не ждут движения курсора.
+	// Then: раздел сразу переходит в «загрузка», а сам `ps` ждёт паузы — уходит
+	// только тик дебаунса, контекста запроса ещё нет.
 	if !shown.fleet.preview {
 		t.Fatalf("preview = %v", shown.fleet.preview)
 	}
-	if cmd == nil || shown.processes.status != diagnosticsLoading || shown.processes.cancel == nil {
-		t.Fatalf("сайдбар не запросил процессы: cmd=%v status=%v", cmd, shown.processes.status)
+	if cmd == nil || shown.processes.status != diagnosticsLoading || shown.processes.cancel != nil {
+		t.Fatalf("сайдбар не запланировал запрос: cmd=%v status=%v cancel=%v", cmd, shown.processes.status, shown.processes.cancel != nil)
+	}
+
+	// When: пауза истекла и тик вернулся в модель.
+	loaded, cmd := updateModel(t, shown, debounceMsg{kind: debounceTopProcesses, generation: shown.processes.generation})
+
+	// Then: ушёл настоящий запрос со своим контекстом.
+	if cmd == nil || loaded.processes.status != diagnosticsLoading || loaded.processes.cancel == nil {
+		t.Fatalf("дебаунс не запросил процессы: cmd=%v status=%v", cmd, loaded.processes.status)
 	}
 
 	// When: сайдбар выключают той же клавишей.
-	hidden, cmd := updateModel(t, shown, key("v"))
+	hidden, cmd := updateModel(t, loaded, key("v"))
 
-	// Then: невидимый раздел по ssh не ходит.
-	if hidden.fleet.preview || cmd != nil {
-		t.Fatalf("скрытый сайдбар запросил процессы: preview=%v cmd=%v", hidden.fleet.preview, cmd)
+	// Then: невидимый раздел по ssh не ходит, а идущий запрос снят по контексту.
+	if hidden.fleet.preview || cmd != nil || hidden.processes.cancel != nil {
+		t.Fatalf("скрытый сайдбар запросил процессы: preview=%v cmd=%v cancel=%v", hidden.fleet.preview, cmd, hidden.processes.cancel != nil)
 	}
 
 	// И первичная загрузка: размер терминала приходит первым сообщением после старта.
@@ -121,6 +130,10 @@ func TestFleetSidebarLoadsTopProcessesWhenShown(t *testing.T) {
 	sized, cmd := updateModel(t, fresh, tea.WindowSizeMsg{Width: 120, Height: 30})
 	if cmd == nil || sized.processes.status != diagnosticsLoading {
 		t.Fatalf("первый WindowSizeMsg оставил сайдбар без данных: cmd=%v status=%v", cmd, sized.processes.status)
+	}
+	started, cmd := updateModel(t, sized, debounceMsg{kind: debounceTopProcesses, generation: sized.processes.generation})
+	if cmd == nil || started.processes.cancel == nil {
+		t.Fatalf("после паузы первичный запрос не ушёл: cmd=%v cancel=%v", cmd, started.processes.cancel != nil)
 	}
 }
 
