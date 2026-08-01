@@ -120,6 +120,35 @@ func TestFleetLogboxMovementSwitchesHostAndStream(t *testing.T) {
 	}
 }
 
+func TestFleetLogboxHostSwitchDropsPreviousHostLines(t *testing.T) {
+	// Given: an open log drawer with lines already collected from the first host.
+	streamer := &fakeLogStreamer{streams: []sshx.Stream{
+		{Lines: make(chan string, 1), Errors: make(chan error, 1), Close: func() error { return nil }},
+		{Lines: make(chan string, 1), Errors: make(chan error, 1), Close: func() error { return nil }},
+	}}
+	m := Model{
+		screen:    screenFleet,
+		snapshot:  snapshotWithServers("web", "db"),
+		logSource: streamer,
+		logs:      newLogsScreen(),
+		layout:    newLayout(120, 30),
+		fleet:     newFleetModel(),
+	}
+	opened, _ := updateModel(t, m, key("l"))
+	opened.logs.buffer.Append("web-only line")
+
+	// When: the selection moves to the next host.
+	moved, _ := updateModel(t, opened, key("j"))
+
+	// Then: the drawer body is empty instead of showing the previous host's lines.
+	if got := moved.logs.buffer.Visible(); len(got) != 0 {
+		t.Fatalf("visible after host switch = %#v", got)
+	}
+	if view := moved.View(); strings.Contains(view, "web-only line") {
+		t.Fatalf("drawer kept lines of the previous host:\n%s", view)
+	}
+}
+
 func TestLogsLevelAxisFiltersAndCounts(t *testing.T) {
 	// Given: a logs screen holding lines of mixed severity.
 	logs := newLogsScreen()

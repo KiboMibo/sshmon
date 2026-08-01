@@ -177,6 +177,17 @@ func (b *LogBuffer) window() []string {
 	return b.lines[b.start:]
 }
 
+// Reset очищает накопленные строки. Буфер переиспользуют при смене хоста или
+// источника, и строки прежнего потока не должны оставаться под новым заголовком.
+// Пауза и фильтр — состояние экрана, а не потока, поэтому сохраняются.
+func (b *LogBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.lines = nil
+	b.start = 0
+	b.frozen = nil
+}
+
 func (b *LogBuffer) SetPaused(paused bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

@@ -83,6 +83,10 @@ func (l *logsScreen) ensure() {
 func (m *Model) startLogsStream() tea.Cmd {
 	m.logs.ensure()
 	m.cancelLogsStream()
+	// Новый поток — новый хост или источник: строки прежнего под новым заголовком
+	// выглядят как логи выбранного сервера, хотя пришли с другого.
+	m.logs.buffer.Reset()
+	m.logs.refresh()
 	m.request = max(m.request, m.logs.generation) + 1
 	m.logs.generation = m.request
 	m.logs.status = diagnosticsLoading
