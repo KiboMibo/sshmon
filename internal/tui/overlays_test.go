@@ -90,3 +90,22 @@ func TestHelpContentDependsOnActiveScreen(t *testing.T) {
 		t.Fatalf("Fleet help advertises Dashboard-only keys: %q", fleetHelp)
 	}
 }
+
+func TestHelpAdvertisesExitAndDrawerKeysOnEveryScreen(t *testing.T) {
+	// Given every screen that has its own key map.
+	screens := []screenKind{screenFleet, screenDashboard, screenLogs, screenHistory, screenProcesses, screenPorts, screenContainers}
+
+	// When their help is rendered.
+	for _, kind := range screens {
+		text := helpText(kind)
+		// Then the global exit is documented everywhere it works.
+		if !strings.Contains(text, "q ctrl+c") {
+			t.Fatalf("help of screen %v misses the exit key: %q", kind, text)
+		}
+	}
+
+	// And the fleet map documents the log drawer source switch bound to "s".
+	if !strings.Contains(helpText(screenFleet), "источник") {
+		t.Fatalf("Fleet help misses the log drawer source key: %q", helpText(screenFleet))
+	}
+}
