@@ -52,9 +52,16 @@ func (m *Model) applyReconnectResult(msg reconnectResultMsg) {
 		return
 	}
 	if errors.Is(msg.err, sshx.ErrPassphraseRequired) || errors.Is(msg.err, sshx.ErrInvalidPassphrase) {
-		// Реконнект запускается и из палитры, и из чата: без закрытия
-		// предыдущий оверлей остаётся недоделанным (чат не отменён, ввод жив).
-		m.closeOverlay()
+		// Реконнект запускается и из палитры, и из чата: предыдущий оверлей
+		// нельзя оставлять недоделанным. У чата достаточно отменить активный
+		// запрос — переписка не имеет отношения к парольной фразе и переживает
+		// запрос; остальные оверлеи закрываем полностью.
+		if m.overlay == overlayChat {
+			m.cancelChat()
+			m.overlay = overlayNone
+		} else {
+			m.closeOverlay()
+		}
 		m.passphrase = newPassphraseOverlay(msg.server)
 		m.overlay = overlayPassphrase
 	}

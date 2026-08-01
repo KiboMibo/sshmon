@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/kibomibo/sshmon/internal/llm"
 	"github.com/kibomibo/sshmon/internal/sshx"
 )
 
@@ -91,6 +92,25 @@ func TestPassphrasePromptMasksClearsAndRetries(t *testing.T) {
 	m, _ = updateModel(t, m, cmd())
 	if len(connections.reconnects) != 2 {
 		t.Fatalf("reconnects = %#v", connections.reconnects)
+	}
+}
+
+func TestPassphrasePromptFromChatKeepsConversation(t *testing.T) {
+	// Given an open chat with a conversation and a reconnect in flight.
+	m := Model{screen: screenDashboard, snapshot: snapshotWithServers("web")}
+	m, _ = updateModel(t, m, key("c"))
+	m.chat.messages = []llm.Message{{Role: "user", Content: "что с web?"}}
+	m.reconnectGeneration = 1
+
+	// When reconnect reports that the key needs a passphrase.
+	m, _ = updateModel(t, m, reconnectResultMsg{server: "web", generation: 1, err: sshx.ErrPassphraseRequired})
+
+	// Then the prompt takes over the screen without throwing the messages away.
+	if m.overlay != overlayPassphrase {
+		t.Fatalf("overlay = %v", m.overlay)
+	}
+	if len(m.chat.messages) != 1 {
+		t.Fatalf("chat messages = %#v", m.chat.messages)
 	}
 }
 
