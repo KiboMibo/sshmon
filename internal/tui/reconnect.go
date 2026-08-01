@@ -52,6 +52,9 @@ func (m *Model) applyReconnectResult(msg reconnectResultMsg) {
 		return
 	}
 	if errors.Is(msg.err, sshx.ErrPassphraseRequired) || errors.Is(msg.err, sshx.ErrInvalidPassphrase) {
+		// Реконнект запускается и из палитры, и из чата: без закрытия
+		// предыдущий оверлей остаётся недоделанным (чат не отменён, ввод жив).
+		m.closeOverlay()
 		m.passphrase = newPassphraseOverlay(msg.server)
 		m.overlay = overlayPassphrase
 	}
@@ -59,20 +62,26 @@ func (m *Model) applyReconnectResult(msg reconnectResultMsg) {
 
 func (m *Model) handlePassphraseKey(key tea.KeyMsg) tea.Cmd {
 	if key.String() == "enter" {
-		value := m.passphrase.input.Value()
-		if value == "" || m.connections == nil {
+		if m.connections == nil {
 			return nil
 		}
-		secret := []byte(value)
+		// Одна строка от textinput и один байтовый буфер — больше копий секрета
+		// в куче не появляется, буфер зануляем сразу после передачи (получатель
+		// хранит собственную копию). Остаточный риск: внутренний []rune самого
+		// textinput не затирается — Reset лишь отбрасывает срез, и секрет живёт
+		// в куче до сборки мусора.
+		secret := []byte(m.passphrase.input.Value())
+		m.passphrase.input.Reset()
+		if len(secret) == 0 {
+			return nil
+		}
 		err := m.connections.SetPassphrase(m.passphrase.server, secret)
 		for index := range secret {
 			secret[index] = 0
 		}
 		if err != nil {
-			m.passphrase.input.Reset()
 			return nil
 		}
-		m.passphrase.input.Reset()
 		m.overlay = overlayNone
 		return m.startReconnect()
 	}
