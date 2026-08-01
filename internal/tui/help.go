@@ -100,8 +100,16 @@ func helpSections(kind screenKind) []helpSection {
 		return []helpSection{
 			{title: "фильтры", rows: []helpRow{
 				{"/", "фильтр по подстроке"},
-				{"w", "уровень: all · info · warn · error"},
-				{"← → s x", "источник (здесь x занят источником, не ssh)"},
+				{"n N", "следующее · предыдущее совпадение"},
+				{"w", "только warn и выше"},
+				{"W", "перебор уровней: all · info · warn · error"},
+				{"← → s", "источник: журнал, systemd-юниты, контейнеры"},
+			}},
+			{title: "строка", rows: []helpRow{
+				{"↑↓", "выделенная строка"},
+				{"y", "скопировать выделенную строку"},
+				{"c", "контекст ±5 строк без фильтра"},
+				{"t", "скрыть · показать время"},
 			}},
 			{title: "поток", rows: []helpRow{
 				{"space", "пауза хвоста"},
@@ -109,10 +117,17 @@ func helpSections(kind screenKind) []helpSection {
 				{"ctrl+r", "переподключить сервер"},
 			}},
 			{title: "движение", rows: []helpRow{
-				{"↑↓ pgup pgdown", "прокрутка"},
+				{"pgup pgdown", "страницами"},
 				{"home end", "в начало · в конец"},
 			}},
-			{title: "прочее", rows: append(common.rows, helpRow{"esc", "назад"})},
+			// Общие строки здесь не годятся: «c» на этом экране — контекст, а не чат.
+			{title: "прочее", rows: []helpRow{
+				{"x", "ssh в терминале"},
+				{":", "палитра команд"},
+				{"?", "эта справка"},
+				{"q ctrl+c", "выход из sshmon"},
+				{"esc", "назад"},
+			}},
 		}
 	case screenHistory:
 		return []helpSection{
