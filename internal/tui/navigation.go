@@ -102,6 +102,9 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "left":
 		if m.screen == screenFleet {
 			m.fleet.expanded = false
+			// Детали свернулись — на их место вернулся сайдбар, и его раздел
+			// «ТОП ПО ПАМЯТИ» пуст, пока курсор стоит на месте.
+			return m, m.startFleetTopProcesses()
 		}
 	case "g", "tab":
 		if m.screen == screenFleet {
@@ -125,6 +128,9 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.screen == screenFleet {
 			m.ensureFleet()
 			m.fleet.preview = !m.fleet.preview
+			// Выключение сайдбара запроса не порождает: startFleetTopProcesses
+			// сам молчит, когда сайдбара на экране нет.
+			return m, m.startFleetTopProcesses()
 		}
 	case "enter":
 		if m.screen == screenFleet && len(m.snapshot.Servers) > 0 {
@@ -169,6 +175,9 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if m.screen == screenDashboard {
 			m.cancelDashboardWorkspace()
 			m.screen = screenFleet
+			// Сайдбар флота снова на экране, а его данные остались от прошлого
+			// показа — или их не было вовсе.
+			return m, m.startFleetTopProcesses()
 		} else if m.screen == screenFleet {
 			m.ensureFleet()
 			m.fleet.filter = fleetFilter{}

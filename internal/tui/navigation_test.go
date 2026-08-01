@@ -66,6 +66,38 @@ func TestDashboardShortcutsOpenOnlyDeepScreens(t *testing.T) {
 	}
 }
 
+func TestFleetSidebarLoadsTopProcessesWhenShown(t *testing.T) {
+	// Given: широкий экран флота с выключенным сайдбаром.
+	m := Model{screen: screenFleet, snapshot: snapshotWithServers("web"), layout: newLayout(120, 30), fleet: newFleetModel()}
+	m.fleet.preview = false
+
+	// When: сайдбар включают клавишей «v».
+	shown, cmd := updateModel(t, m, key("v"))
+
+	// Then: процессы выбранного хоста уже запрошены, а не ждут движения курсора.
+	if !shown.fleet.preview {
+		t.Fatalf("preview = %v", shown.fleet.preview)
+	}
+	if cmd == nil || shown.processes.status != diagnosticsLoading || shown.processes.cancel == nil {
+		t.Fatalf("сайдбар не запросил процессы: cmd=%v status=%v", cmd, shown.processes.status)
+	}
+
+	// When: сайдбар выключают той же клавишей.
+	hidden, cmd := updateModel(t, shown, key("v"))
+
+	// Then: невидимый раздел по ssh не ходит.
+	if hidden.fleet.preview || cmd != nil {
+		t.Fatalf("скрытый сайдбар запросил процессы: preview=%v cmd=%v", hidden.fleet.preview, cmd)
+	}
+
+	// И первичная загрузка: размер терминала приходит первым сообщением после старта.
+	fresh := Model{screen: screenFleet, snapshot: snapshotWithServers("web"), fleet: newFleetModel()}
+	sized, cmd := updateModel(t, fresh, tea.WindowSizeMsg{Width: 120, Height: 30})
+	if cmd == nil || sized.processes.status != diagnosticsLoading {
+		t.Fatalf("первый WindowSizeMsg оставил сайдбар без данных: cmd=%v status=%v", cmd, sized.processes.status)
+	}
+}
+
 func TestOverlayTakesEscapeAndQuitWorksOnEveryScreen(t *testing.T) {
 	// Given Fleet with a global chat overlay.
 	m := Model{screen: screenFleet}

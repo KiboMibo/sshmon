@@ -67,6 +67,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout = newLayout(msg.Width, msg.Height)
 		m.logs.resize(m.layout.width, m.layout.height)
 		m.resizeOverlay(msg.Width, msg.Height)
+		// Первичная загрузка сайдбара флота: до первого WindowSizeMsg ширина
+		// неизвестна, и видимость сайдбара определить нельзя, а Init() работает
+		// на копии модели и состояние запроса потерял бы. Повторные resize'ы
+		// (перетаскивание рамки окна) ничего не перезапрашивают — иначе каждая
+		// промежуточная ширина слала бы на хост свою ssh-команду.
+		if m.processes.status == diagnosticsIdle {
+			return m, m.startFleetTopProcesses()
+		}
 		return m, nil
 	case collectorEventMsg:
 		previousMinute := m.snapshot.Time.Truncate(time.Minute)

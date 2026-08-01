@@ -100,9 +100,11 @@ func processNameAndTail(command string) (string, string) {
 // прошлый запрос снимается по контексту.
 func (m *Model) startFleetTopProcesses() tea.Cmd {
 	m.ensureFleet()
-	// Сайдбара нет — нет и причины ходить по SSH: в раскрытом виде и на узком
-	// терминале раздел «ТОП ПО ПАМЯТИ» не рисуется.
-	if !m.fleet.preview || m.fleet.expanded || !m.layout.twoColumn() {
+	// Сайдбара нет — нет и причины ходить по SSH: вне экрана флота, в раскрытом
+	// виде и на узком терминале раздел «ТОП ПО ПАМЯТИ» не рисуется. Условие
+	// живёт здесь, а не на вызывающей стороне: точек вызова несколько
+	// (движение курсора, «v», «←», возврат с дашборда, первый размер окна).
+	if m.screen != screenFleet || !m.fleet.preview || m.fleet.expanded || !m.layout.twoColumn() {
 		return nil
 	}
 	if m.processes.cancel != nil {
