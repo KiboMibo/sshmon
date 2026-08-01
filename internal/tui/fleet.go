@@ -154,7 +154,8 @@ func (m Model) renderFleet() string {
 func (m Model) fleetFooter() string {
 	switch {
 	case m.fleet.logbox:
-		return dimStyle.Render("esc закрыть ящик · enter логи на весь экран · ↑↓ по строкам")
+		// ↑↓ в ящике переключают хост вместе с потоком, а не строки лога.
+		return dimStyle.Render("esc закрыть ящик · enter логи на весь экран · ↑↓ хост")
 	case m.fleet.expanded:
 		return dimStyle.Render("← свернуть · enter весь экран · / поиск · d контейнеры · ? ещё")
 	default:
