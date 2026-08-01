@@ -118,17 +118,22 @@ func (m *Model) syncLogSources() {
 		current = m.logs.sources[m.logs.source]
 	}
 	sources := []collect.LogSource{{Kind: collect.LogSystem}}
-	for _, unit := range m.dashboard.units.items {
-		if unit.Name == "" {
-			continue
+	// Юниты и контейнеры берём только от текущего хоста: после экрана сервера A
+	// и возврата к списку они остаются в памяти, и на логах сервера B в оси
+	// источников оказались бы чужие имена.
+	if m.dashboard.server == m.selectedName() {
+		for _, unit := range m.dashboard.units.items {
+			if unit.Name == "" {
+				continue
+			}
+			sources = append(sources, collect.LogSource{Kind: collect.LogJournal, Name: unit.Name})
 		}
-		sources = append(sources, collect.LogSource{Kind: collect.LogJournal, Name: unit.Name})
-	}
-	for _, container := range m.dashboard.containers.items {
-		if container.Name == "" {
-			continue
+		for _, container := range m.dashboard.containers.items {
+			if container.Name == "" {
+				continue
+			}
+			sources = append(sources, collect.LogSource{Kind: collect.LogContainer, Name: container.Name})
 		}
-		sources = append(sources, collect.LogSource{Kind: collect.LogContainer, Name: container.Name})
 	}
 	m.logs.sources = sources
 	m.logs.source = max(0, slices.Index(sources, current))

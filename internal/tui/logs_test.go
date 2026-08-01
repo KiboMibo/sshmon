@@ -68,6 +68,7 @@ func TestLogsControlsPauseFilterCycleReconnectAndCancel(t *testing.T) {
 		snapshot: snapshotWithServers("web"),
 		logs:     newLogsScreen(),
 	}
+	m.dashboard.server = "web"
 	m.dashboard.units.items = []collect.SystemdUnit{{Name: "nginx.service"}}
 	m.logs.cancel = func() { cancelled++ }
 	m.logs.buffer.Append("INFO ready")
@@ -141,6 +142,7 @@ func TestLogsSourcesComeFromUnitsAndContainers(t *testing.T) {
 	streamer := &fakeLogStreamer{}
 	m := Model{screen: screenDashboard, snapshot: snapshotWithServers("web"), logSource: streamer, logs: newLogsScreen()}
 	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	m.dashboard.server = "web"
 	m.dashboard.units.items = []collect.SystemdUnit{{Name: "postgres.service"}}
 	m.dashboard.containers.items = []collect.Container{{ID: "abc", Name: "api-worker"}}
 
@@ -175,6 +177,7 @@ func TestLogsSourceSwitchRestartsStreamAndDropsLines(t *testing.T) {
 	}}
 	m := Model{screen: screenLogs, snapshot: snapshotWithServers("web"), logSource: streamer, logs: newLogsScreen()}
 	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	m.dashboard.server = "web"
 	m.dashboard.containers.items = []collect.Container{{ID: "abc", Name: "api-worker"}}
 	m.logs.buffer.Append("system line")
 
@@ -221,12 +224,40 @@ func TestLogsSourcesFollowServerChangeAndSurviveEmptyData(t *testing.T) {
 
 	// When: another server is selected and its units are known.
 	m.selected = 1
+	m.dashboard.server = "db"
 	m.dashboard.units.items = []collect.SystemdUnit{{Name: "redis.service"}}
 	m.startLogsStream()
 
 	// Then: the list is rebuilt for the new server.
 	if len(m.logs.sources) != 2 || m.logs.sources[1].Name != "redis.service" {
 		t.Fatalf("sources after server change = %#v", m.logs.sources)
+	}
+}
+
+func TestLogsSourcesIgnoreUnitsAndContainersOfAnotherServer(t *testing.T) {
+	// Given: юниты и контейнеры, загруженные экраном сервера «web».
+	streamer := &fakeLogStreamer{}
+	m := Model{screen: screenLogs, snapshot: snapshotWithServers("web", "db"), logSource: streamer, logs: newLogsScreen()}
+	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
+	m.dashboard.server = "web"
+	m.dashboard.units.items = []collect.SystemdUnit{{Name: "postgres.service"}}
+	m.dashboard.containers.items = []collect.Container{{ID: "abc", Name: "api-worker"}}
+
+	// When: логи открывают для другого сервера.
+	m.selected = 1
+	m.startLogsStream()
+
+	// Then: в оси остаётся только системный журнал — чужой юнит дал бы пустой
+	// вывод, а чужой контейнер — ошибку.
+	if !slices.Equal(m.logs.sources, []collect.LogSource{{Kind: collect.LogSystem}}) {
+		t.Fatalf("sources of another server = %#v", m.logs.sources)
+	}
+
+	// And: у своего сервера источники на месте.
+	m.selected = 0
+	m.startLogsStream()
+	if len(m.logs.sources) != 3 {
+		t.Fatalf("sources of the own server = %#v", m.logs.sources)
 	}
 }
 
