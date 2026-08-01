@@ -76,6 +76,50 @@ func TestFleetLogboxEnterGoesFullScreen(t *testing.T) {
 	}
 }
 
+func TestFleetLogboxMovementSwitchesHostAndStream(t *testing.T) {
+	// Given: an open log drawer over a fleet of two hosts.
+	streamer := &fakeLogStreamer{streams: []sshx.Stream{
+		{Lines: make(chan string, 1), Errors: make(chan error, 1), Close: func() error { return nil }},
+		{Lines: make(chan string, 1), Errors: make(chan error, 1), Close: func() error { return nil }},
+	}}
+	m := Model{
+		screen:    screenFleet,
+		snapshot:  snapshotWithServers("web", "db"),
+		logSource: streamer,
+		logs:      newLogsScreen(),
+		layout:    newLayout(120, 30),
+		fleet:     newFleetModel(),
+	}
+	opened, cmd := updateModel(t, m, key("l"))
+	if cmd != nil {
+		cmd()
+	}
+
+	// When: the selection moves down inside the drawer.
+	moved, cmd := updateModel(t, opened, key("j"))
+	if cmd == nil {
+		t.Fatal("movement inside the drawer produced no command")
+	}
+	if batch, ok := cmd().(tea.BatchMsg); ok {
+		for _, inner := range batch {
+			if inner != nil {
+				inner()
+			}
+		}
+	}
+
+	// Then: both the header and the stream follow the new host.
+	if moved.selected != 1 || !moved.fleet.logbox {
+		t.Fatalf("selected=%d logbox=%v", moved.selected, moved.fleet.logbox)
+	}
+	if len(streamer.requests) != 2 || streamer.requests[1].Server != "db" {
+		t.Fatalf("requests = %#v", streamer.requests)
+	}
+	if !strings.Contains(moved.View(), "ЛОГИ · db") {
+		t.Fatalf("drawer header kept the old host:\n%s", moved.View())
+	}
+}
+
 func TestLogsLevelAxisFiltersAndCounts(t *testing.T) {
 	// Given: a logs screen holding lines of mixed severity.
 	logs := newLogsScreen()

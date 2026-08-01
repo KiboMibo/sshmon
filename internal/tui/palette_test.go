@@ -40,6 +40,29 @@ func TestPaletteFiltersAndOpensSelectedServer(t *testing.T) {
 	}
 }
 
+func TestPaletteServerSwitchRestartsDashboardWorkspace(t *testing.T) {
+	// Given a Dashboard whose workspace requests belong to the previous host.
+	cancelled := 0
+	m := Model{screen: screenDashboard, snapshot: snapshotWithServers("web", "db"), palette: newPaletteOverlay()}
+	m.dashboard.containers.cancel = func() { cancelled++ }
+	m.dashboard.units.cancel = func() { cancelled++ }
+	m.dashboard.logs.cancel = func() { cancelled++ }
+	m.overlay = overlayPalette
+	m.palette.input.SetValue("db")
+	m.palette.refresh(m)
+
+	// When another server is opened from the palette.
+	m, cmd := updateModel(t, m, key("enter"))
+
+	// Then the stale workspace is cancelled and a new one starts for the new host.
+	if cancelled != 3 {
+		t.Fatalf("cancelled = %d, want 3 workspace requests", cancelled)
+	}
+	if cmd == nil || m.selected != 1 || m.screen != screenDashboard {
+		t.Fatalf("cmd=%v selected=%d screen=%v", cmd, m.selected, m.screen)
+	}
+}
+
 func itemLabels(items []paletteItem) []string {
 	labels := make([]string, len(items))
 	for index := range items {

@@ -119,8 +119,8 @@ func TestDashboardUnitClearReturnsToSystemLog(t *testing.T) {
 	m, _ = updateModel(t, m, key("n"))
 	m, _ = updateModel(t, m, key("enter"))
 
-	// When the operator clears the unit selection.
-	m, cmd := updateModel(t, m, key("x"))
+	// When the operator clears the unit selection ("s" since "x" is ssh everywhere).
+	m, cmd := updateModel(t, m, key("s"))
 	if cmd == nil {
 		t.Fatal("clear selection did not start the system snapshot")
 	}

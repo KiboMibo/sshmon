@@ -38,6 +38,22 @@ func TestEscapeClosesOverlayBeforeNavigatingScreen(t *testing.T) {
 	}
 }
 
+func TestHelpOverlayClosesOnQuestionMarkAsAdvertised(t *testing.T) {
+	// Given Help over a deep screen and its own "esc / ?" hint.
+	m := Model{screen: screenProcesses, overlay: overlayHelp}
+	if !strings.Contains(helpText(screenProcesses), "esc / ? — закрыть") {
+		t.Fatal("help stopped advertising the ? shortcut")
+	}
+
+	// When ? is pressed.
+	m, _ = updateModel(t, m, key("?"))
+
+	// Then Help closes instead of swallowing the key.
+	if m.overlay != overlayNone || m.screen != screenProcesses {
+		t.Fatalf("overlay=%v screen=%v", m.overlay, m.screen)
+	}
+}
+
 func TestSearchOverlayAppliesFleetQueryAndSelectsMatch(t *testing.T) {
 	// Given Fleet with a Search query matching only the second server.
 	m := Model{screen: screenFleet, snapshot: snapshotWithServers("web", "db"), fleet: newFleetModel(), search: newSearchOverlay()}

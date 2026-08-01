@@ -28,6 +28,8 @@ func TestDashboardShortcutsOpenOnlyDeepScreens(t *testing.T) {
 	}{
 		{key("p"), screenProcesses},
 		{key("o"), screenPorts},
+		{key("h"), screenHistory},
+		{key("l"), screenLogs},
 		{tea.KeyMsg{Type: tea.KeyCtrlH}, screenHistory},
 		{tea.KeyMsg{Type: tea.KeyCtrlL}, screenLogs},
 		{key("d"), screenContainers},
@@ -45,8 +47,8 @@ func TestDashboardShortcutsOpenOnlyDeepScreens(t *testing.T) {
 		})
 	}
 
-	// Given a server Dashboard, plain h and l are freed for navigation, not history/logs.
-	for _, k := range []string{"h", "l"} {
+	// Given a server Dashboard, j and k stay tile scrolling instead of navigating away.
+	for _, k := range []string{"j", "k"} {
 		m := Model{screen: screenDashboard, snapshot: snapshotWithServers("web")}
 		m, _ = updateModel(t, m, key(k))
 		if m.screen != screenDashboard {
@@ -64,7 +66,7 @@ func TestDashboardShortcutsOpenOnlyDeepScreens(t *testing.T) {
 	}
 }
 
-func TestOverlayTakesEscapeAndFleetOwnsQuit(t *testing.T) {
+func TestOverlayTakesEscapeAndQuitWorksOnEveryScreen(t *testing.T) {
 	// Given Fleet with a global chat overlay.
 	m := Model{screen: screenFleet}
 	m, _ = updateModel(t, m, key("c"))
@@ -80,6 +82,14 @@ func TestOverlayTakesEscapeAndFleetOwnsQuit(t *testing.T) {
 	// Then Escape closes only the overlay and q exits from Fleet.
 	if quit == nil {
 		t.Fatal("q on Fleet did not return tea.Quit")
+	}
+
+	// And ctrl+c exits from any other screen too, not just Fleet.
+	for _, screen := range []screenKind{screenDashboard, screenLogs, screenHistory, screenProcesses} {
+		deep := Model{screen: screen, snapshot: snapshotWithServers("web"), logs: newLogsScreen()}
+		if _, quit := updateModel(t, deep, tea.KeyMsg{Type: tea.KeyCtrlC}); quit == nil {
+			t.Fatalf("ctrl+c on screen %v did not return tea.Quit", screen)
+		}
 	}
 }
 

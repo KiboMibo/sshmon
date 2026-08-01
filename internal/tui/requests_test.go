@@ -28,6 +28,25 @@ func TestDiagnosticsLifecycleCancelsAndIgnoresStaleResponses(t *testing.T) {
 	}
 }
 
+func TestCancelDiagnosticsDropsEveryKindNotOnlyActiveScreen(t *testing.T) {
+	// Given processes started earlier and ports opened after them from the palette.
+	processesCancelled, portsCancelled := false, false
+	m := Model{screen: screenPorts, snapshot: snapshotWithServers("web")}
+	m.processes.cancel = func() { processesCancelled = true }
+	m.ports.cancel = func() { portsCancelled = true }
+
+	// When diagnostics are cancelled while the active screen is already Ports.
+	m.cancelDiagnostics()
+
+	// Then the abandoned processes request is cancelled too instead of running to the end.
+	if !processesCancelled || !portsCancelled {
+		t.Fatalf("processes=%v ports=%v", processesCancelled, portsCancelled)
+	}
+	if m.processes.cancel != nil || m.ports.cancel != nil {
+		t.Fatal("cancel funcs are not cleared after cancellation")
+	}
+}
+
 func TestDiagnosticsResponsesExposeUnsupportedAndErrorStates(t *testing.T) {
 	// Given active port and container generations.
 	m := Model{screen: screenPorts}

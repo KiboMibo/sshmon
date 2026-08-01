@@ -13,7 +13,6 @@ import (
 
 type Model struct {
 	collector       *collect.Collector
-	llm             *llm.Client
 	chatClient      chatClient
 	dashboardSource dashboardSource
 	config          *config.Config
@@ -46,7 +45,7 @@ type Model struct {
 }
 
 func New(collector *collect.Collector, client *llm.Client, cfg *config.Config) Model {
-	m := Model{collector: collector, llm: client, chatClient: client, dashboardSource: collector, config: cfg, screen: screenFleet, fleet: newFleetModel(), logs: newLogsScreen(), logSource: collector, chat: newChatOverlay(), search: newSearchOverlay(), palette: newPaletteOverlay(), connections: collector}
+	m := Model{collector: collector, chatClient: client, dashboardSource: collector, config: cfg, screen: screenFleet, fleet: newFleetModel(), logs: newLogsScreen(), logSource: collector, chat: newChatOverlay(), search: newSearchOverlay(), palette: newPaletteOverlay(), connections: collector}
 	if collector != nil {
 		m.snapshot = collector.Snapshot()
 		m.events, m.unsubscribe = collector.Subscribe(1)
@@ -191,11 +190,6 @@ func (m Model) renderScreen() string {
 	}
 }
 
-func (m Model) renderDeepPlaceholder(title string) string {
-	return titleStyle.Render("sshmon · "+m.selectedName()+" · "+title) + "\n\n" +
-		dimStyle.Render("данные загружаются · esc назад")
-}
-
 func (m *Model) clampSelection() {
 	if len(m.snapshot.Servers) == 0 {
 		m.selected = 0
@@ -216,11 +210,15 @@ func (m Model) selectedName() string {
 	return "сервер не выбран"
 }
 
+// closeSubscription идемпотентна: её зовут на каждом пути выхода, а сама
+// отписка коллектора защищена sync.Once. Канал событий тоже забываем — иначе
+// waitEvent продолжит читать уже закрытый канал.
 func (m *Model) closeSubscription() {
 	if m.unsubscribe != nil {
 		m.unsubscribe()
 		m.unsubscribe = nil
 	}
+	m.events = nil
 }
 
 var _ tea.Model = Model{}

@@ -29,8 +29,28 @@ func (m *Model) handleFleetLogboxKey(key tea.KeyMsg) (tea.Cmd, bool) {
 	case "esc":
 		m.closeFleetLogbox()
 		return nil, true
+	case "up", "k":
+		return m.moveFleetLogbox(-1), true
+	case "down", "j":
+		return m.moveFleetLogbox(1), true
+	case "pgup":
+		return m.moveFleetLogbox(-fleetPageSize), true
+	case "pgdown":
+		return m.moveFleetLogbox(fleetPageSize), true
 	}
 	return m.handleLogsKey(key)
+}
+
+// moveFleetLogbox двигает выбор по списку хостов вместе с потоком логов:
+// заголовок ящика подписан выбранным хостом, поэтому оставлять стрим на
+// прежнем нельзя — строки не совпадали бы с заголовком.
+func (m *Model) moveFleetLogbox(delta int) tea.Cmd {
+	previous := m.selected
+	cmd := m.moveFleetBy(delta)
+	if m.selected == previous {
+		return cmd
+	}
+	return tea.Batch(cmd, m.startLogsStream())
 }
 
 func (m Model) fleetLogboxLines(width int) []string {
@@ -46,7 +66,7 @@ func (m Model) fleetLogboxLines(width int) []string {
 	if len(visible) == 0 {
 		body = append(body, dimStyle.Render("строк пока нет"))
 	}
-	return panelBoxStyled("ЛОГИ · "+m.selectedName(), "/ фильтр · w уровень · x источник · enter весь экран · esc",
+	return panelBoxStyled("ЛОГИ · "+m.selectedName(), "↑↓ хост · / фильтр · w уровень · s источник · enter весь экран · esc",
 		width, body, dimStyle)
 }
 
