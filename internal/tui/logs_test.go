@@ -561,3 +561,33 @@ func TestLogsHighlightIsAppliedOverSanitizedText(t *testing.T) {
 		t.Fatalf("ширина санитизированной строки = %d", lipgloss.Width(line))
 	}
 }
+
+func TestLogsClipboardPayloadIsCapped(t *testing.T) {
+	// Given: строка лога длиннее предела OSC 52 (сканер потока пропускает до 1 МиБ).
+	long := strings.Repeat("a", clipboardLimit*3)
+	m := logsScreenModel(t, long)
+	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyUp})
+
+	// When: строку копируют по «y».
+	m, cmd := updateModel(t, m, key("y"))
+
+	// Then: в терминал уходит ограниченная последовательность, а обрезка названа
+	// в подтверждающем сообщении.
+	if cmd == nil {
+		t.Fatal("копирование не вернуло команду")
+	}
+	if payload := osc52Copy(long); len(payload) > 2*clipboardLimit {
+		t.Fatalf("длина последовательности = %d", len(payload))
+	}
+	if !strings.Contains(m.logs.notice, "обрезана") {
+		t.Fatalf("notice = %q", m.logs.notice)
+	}
+
+	// And: короткая строка копируется целиком и без пометки.
+	short := logsScreenModel(t, "short line")
+	short, _ = updateModel(t, short, tea.KeyMsg{Type: tea.KeyUp})
+	short, _ = updateModel(t, short, key("y"))
+	if short.logs.notice != "строка скопирована" {
+		t.Fatalf("notice короткой строки = %q", short.logs.notice)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -290,8 +291,12 @@ func (m *Model) handleLogsKey(key tea.KeyMsg) (tea.Cmd, bool) {
 			m.logs.notice = "нет выделенной строки"
 			return nil, true
 		}
+		text, truncated := clipboardText(line)
 		m.logs.notice = "строка скопирована"
-		return copyToClipboard(line), true
+		if truncated {
+			m.logs.notice = fmt.Sprintf("строка скопирована, обрезана до %d Б", len(text))
+		}
+		return copyToClipboard(text), true
 	case "esc":
 		if m.logs.contextLines != nil {
 			m.logs.toggleContext()
@@ -337,11 +342,34 @@ func (m *Model) cycleLogSource(delta int) tea.Cmd {
 	return m.startLogsStream()
 }
 
+// clipboardLimit — предел полезной нагрузки OSC 52. Строка лога доходит до 1 МиБ
+// (предел сканера потока в sshx), а это ~1.4 МБ escape-последовательности: часть
+// терминалов на такой вставке зависает или обрывает вывод. Нескольких килобайт
+// хватает на любую осмысленную строку, которую переносят в тикет.
+const clipboardLimit = 4096
+
+// clipboardText обрезает копируемый текст до предела и говорит, обрезал ли:
+// молчаливая обрезка выглядела бы как порча буфера обмена.
+func clipboardText(text string) (string, bool) {
+	if len(text) <= clipboardLimit {
+		return text, false
+	}
+	// Режем по границе руны: половина UTF-8 символа в буфере обмена — мусор.
+	cut := clipboardLimit
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut], true
+}
+
 // osc52Copy — последовательность OSC 52: копирование делает сам терминал, поэтому
 // оно работает и через ssh, и не требует зависимостей. Терминалы без поддержки
 // просто игнорируют последовательность — ничего не ломается.
 func osc52Copy(text string) string {
-	return "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(text)) + "\x07"
+	// Предел применяем здесь, а не только на вызывающей стороне: последовательность
+	// уходит прямо в терминал, и защита должна стоять там же, где она собирается.
+	payload, _ := clipboardText(text)
+	return "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(payload)) + "\x07"
 }
 
 func copyToClipboard(text string) tea.Cmd {
