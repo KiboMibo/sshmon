@@ -63,7 +63,8 @@ func TestContainerStatusIsHumanReadable(t *testing.T) {
 		{"Up 2 hours (healthy)", "up"},
 		{"Exited (0) 12 days ago", "exited (0)"},
 		{"Exited (137) 5 minutes ago", "exited (137)"},
-		{"Restarting (1) 3 seconds ago", "restarting (1)"},
+		// Скобки у restarting убраны: там код выхода, а читается он как счётчик рестартов.
+		{"Restarting (1) 3 seconds ago", "restarting"},
 		{"Created", "created"},
 		{"", "—"},
 	} {

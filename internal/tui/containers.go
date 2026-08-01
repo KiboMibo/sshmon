@@ -38,11 +38,16 @@ func containerStatus(status string) string {
 	}
 	state := strings.ToLower(fields[0])
 	switch state {
-	case "exited", "restarting":
+	case "exited":
 		// Число в скобках — код выхода; ради него статус и читают.
 		if len(fields) > 1 && strings.HasPrefix(fields[1], "(") && strings.HasSuffix(fields[1], ")") {
 			return state + " " + fields[1]
 		}
+	case "restarting":
+		// У restarting в скобках docker показывает тот же код выхода, а рядом
+		// в макете стоит счётчик рестартов «×4». Читаются они одинаково, поэтому
+		// скобки убраны: лучше без числа, чем выдать код за число перезапусков.
+		return state
 	case "up":
 		if strings.Contains(strings.ToLower(status), "(unhealthy)") {
 			return "up (unhealthy)"
