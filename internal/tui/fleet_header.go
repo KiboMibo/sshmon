@@ -132,7 +132,9 @@ func (m Model) fleetGroupBox(width int) []string {
 	if len(tiles) < 2 {
 		return nil
 	}
-	return packTiles(tiles, width)
+	// Общая рамка «ГРУППЫ» по макету: без неё ряд плиток читается как продолжение
+	// шапки, а не как отдельный переключатель области видимости.
+	return panelBoxStyled("ГРУППЫ", "", width, packTiles(tiles, width-4), dimStyle)
 }
 
 func (m Model) fleetHeader(width int) string {

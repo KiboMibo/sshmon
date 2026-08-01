@@ -63,11 +63,82 @@ func TestFleetRowShowsServerUptimeInsteadOfDataAge(t *testing.T) {
 	// Given an online server reporting a multi-day uptime.
 	m := Model{screen: screenFleet, snapshot: collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{{Name: "web", Group: "prod", Online: true, Time: time.Now().Add(-7 * time.Second), Uptime: 50*time.Hour + 30*time.Minute}}}}
 	m.layout = newLayout(80, 24)
-	// When the Fleet screen is rendered.
+	// When the row is expanded, where the uptime column belongs.
+	m, _ = updateModel(t, m, key("right"))
 	view := m.View()
-	// Then the table shows the server uptime column instead of the sample age.
-	if !strings.Contains(view, "UPTIME") || !strings.Contains(view, "2d2h") || strings.Contains(view, "ВОЗРАСТ") {
+	// Then the table shows the server uptime in the layout format, not the sample age.
+	if !strings.Contains(view, "UPTIME") || !strings.Contains(view, "2д") || strings.Contains(view, "ВОЗРАСТ") {
 		t.Fatalf("fleet view = %q", view)
+	}
+}
+
+func TestFleetExpandedReplacesSidebarWithDetails(t *testing.T) {
+	// Given a wide fleet with the sidebar enabled.
+	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{{
+		Name: "kava", Group: "main", Online: true, Time: time.Now(), Hostname: "10.2.4.18",
+		NumCPU: 8, CPUPct: 16, MemPct: 61, MemTotalKB: 16 * 1024 * 1024, MemAvailKB: 6 * 1024 * 1024,
+	}}}
+	m := Model{screen: screenFleet, snapshot: snapshot, layout: newLayout(140, 40), fleet: newFleetModel()}
+	// When the sidebar is visible, it carries the host details.
+	if view := m.View(); !strings.Contains(view, "ЧТО НЕ ТАК") || !strings.Contains(view, "ДЕЙСТВИЯ") {
+		t.Fatalf("sidebar missing before expansion:\n%s", view)
+	}
+	// When the row is expanded with the right arrow.
+	m, _ = updateModel(t, m, key("right"))
+	view := m.View()
+	// Then the sidebar gives its place to the card under the row.
+	for _, unwanted := range []string{"ЧТО НЕ ТАК", "ТОП ПО ПАМЯТИ", "ДЕЙСТВИЯ"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("sidebar section %q survived expansion:\n%s", unwanted, view)
+		}
+	}
+	if !strings.Contains(view, "ядер") || !strings.Contains(view, "10.2.4.18") {
+		t.Fatalf("expanded card missing:\n%s", view)
+	}
+}
+
+func TestFleetStateColumnCarriesTextAndSelectionMarker(t *testing.T) {
+	// Given an offline host, a host with a problem and a healthy selected host.
+	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+		{Name: "web", Group: "prod", Online: true, Time: time.Now()},
+		{Name: "db", Group: "prod", Online: true, Time: time.Now()},
+		{Name: "arb", Group: "prod", Time: time.Now()},
+	}, Issues: []collect.Issue{{Server: "db", Severity: "warn", Msg: "память 98%"}}}
+	m := Model{screen: screenFleet, snapshot: snapshot, layout: newLayout(120, 30), fleet: newFleetModel()}
+	// When the list is rendered.
+	view := m.View()
+	// Then the state column reads without colour and the cursor row is marked.
+	for _, want := range []string{"ХОСТ", "СОСТ", "● норма", "⚠ память 98%", "× нет связи", fleetMarker} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("fleet list misses %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "ИМЯ") {
+		t.Fatalf("first column is still named ИМЯ:\n%s", view)
+	}
+}
+
+func TestFleetColumnsAppearOnlyWithDetailsAndDegrade(t *testing.T) {
+	// Given the list mode and the details mode at the same width.
+	plain := fleetColumnLayout(120, false)
+	detailed := fleetColumnLayout(120, true)
+	// Then uptime and docker belong to the details mode only.
+	if plain.uptime || plain.docker {
+		t.Fatalf("list mode shows extra columns: %+v", plain)
+	}
+	if !detailed.uptime || !detailed.docker {
+		t.Fatalf("details mode misses columns: %+v", detailed)
+	}
+	if !strings.Contains(detailed.header(), "UPTIME") || strings.Contains(plain.header(), "DOCKER") {
+		t.Fatalf("headers = %q / %q", detailed.header(), plain.header())
+	}
+	// And on a narrow terminal the extra columns leave first, docker before uptime.
+	narrow := fleetColumnLayout(60, true)
+	if narrow.docker || !narrow.uptime {
+		t.Fatalf("narrow details layout = %+v", narrow)
+	}
+	if narrow.name < fleetNameMin {
+		t.Fatalf("host column shrank below the minimum: %+v", narrow)
 	}
 }
 

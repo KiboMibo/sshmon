@@ -14,11 +14,15 @@ import (
 const fleetPageSize = 10
 
 type fleetModel struct {
-	searching   bool
-	expanded    bool
-	logbox      bool
-	filter      fleetFilter
-	preview     bool
+	searching bool
+	expanded  bool
+	logbox    bool
+	filter    fleetFilter
+	preview   bool
+	// logboxSeen — сколько строк было в буфере, когда пользователь последний раз
+	// смотрел на ящик (открытие ящика, смена хоста, прокрутка к хвосту). Всё,
+	// что пришло позже, счётчик показывает как «новые».
+	logboxSeen  int
 	initialized bool
 }
 
@@ -132,32 +136,43 @@ func (m Model) renderFleet() string {
 	visible := len(groupedServers(m.snapshot, m.configServers(), m.fleet.filter))
 	head = append(head, m.fleetContextLine(visible, m.fleetGroupTotal(), m.layout.width))
 	head = append(head, m.fleetLogboxLines(m.layout.width)...)
+	// Строка подсказок внизу одна на весь экран, поэтому её место резервируем
+	// до расчёта высоты списка.
+	reserved := len(head) + 1
 	if m.layout.twoColumn() {
-		return strings.Join(head, "\n") + "\n" + m.renderFleetColumns(len(head))
+		head = append(head, strings.Split(m.renderFleetColumns(reserved), "\n")...)
+	} else {
+		listLines, _ := m.fleetListLines(m.layout.width)
+		head = append(head, listLines...)
 	}
-	listLines, _ := m.fleetListLines(m.layout.width)
-	footer := dimStyle.Render("↑↓ enter открыть · → детали · / поиск · f проблемы · tab группа · v панель · ? ещё")
-	if m.fleet.expanded {
-		footer = dimStyle.Render("← свернуть · l логи · p процессы · d контейнеры · x ssh · v панель")
+	return strings.Join(append(head, m.fleetFooter()), "\n")
+}
+
+// fleetFooter — единственная строка подсказок экрана (макет 3a): у панелей
+// своих подсказок на нижних рамках больше нет, иначе одни и те же клавиши
+// перечислены на экране дважды.
+func (m Model) fleetFooter() string {
+	switch {
+	case m.fleet.logbox:
+		return dimStyle.Render("esc закрыть ящик · enter логи на весь экран · ↑↓ по строкам")
+	case m.fleet.expanded:
+		return dimStyle.Render("← свернуть · enter весь экран · / поиск · d контейнеры · ? ещё")
+	default:
+		return dimStyle.Render("↑↓ enter открыть · / поиск · f проблемы · ? ещё")
 	}
-	if m.fleet.logbox {
-		footer = dimStyle.Render("esc закрыть ящик · ↑↓ хост · s источник · space пауза · enter весь экран")
-	}
-	return strings.Join(append(head, listLines...), "\n") + "\n" + footer
 }
 
 func (m Model) renderFleetColumns(reserved int) string {
 	// Рамка панели забирает две строки, остальное — список: без внешней рамки
 	// экрана высота считается от полного терминала.
 	contentH := max(1, m.layout.height-panelOverhead-reserved)
-	if !m.fleet.preview {
-		hint := "v боковая панель · / поиск · tab группа · f проблемы"
-		if m.fleet.expanded {
-			hint = "← свернуть · v боковая панель · l логи · p процессы · x ssh"
-		}
+	// Раскрытая карточка и есть детали выбранного хоста, поэтому в этом режиме
+	// сайдбар уступает ей место (макет 3b): иначе те же детали рисуются дважды,
+	// а карточка ужимается в узкую левую колонку.
+	if m.fleet.expanded || !m.fleet.preview {
 		listLines, selectedRow := m.fleetListLines(m.layout.width - 4)
 		scroll := fleetScroll(selectedRow, contentH, len(listLines))
-		full := panelBoxStyled("СЕРВЕРЫ", hint, m.layout.width,
+		full := panelBoxStyled("СЕРВЕРЫ", "", m.layout.width,
 			fitPanelHeight(listLines, contentH, scroll), dimStyle)
 		return strings.Join(full, "\n")
 	}
@@ -165,20 +180,16 @@ func (m Model) renderFleetColumns(reserved int) string {
 	leftW := m.layout.width - rightW - 2
 	listLines, selectedRow := m.fleetListLines(leftW - 4)
 	scroll := fleetScroll(selectedRow, contentH, len(listLines))
-	leftHint := "enter открыть · → детали · / поиск"
-	if m.fleet.expanded {
-		leftHint = "← свернуть · l логи · p процессы · x ssh"
-	}
-	left := panelBoxStyled("СЕРВЕРЫ", leftHint, leftW,
+	left := panelBoxStyled("СЕРВЕРЫ", "", leftW,
 		fitPanelHeight(listLines, contentH, scroll), dimStyle)
-	right := panelBoxStyled(m.fleetDetailTitle(), "v скрыть · f проблемы · tab группа", rightW,
+	right := panelBoxStyled(m.fleetDetailTitle(), "", rightW,
 		fitPanelHeight(m.fleetDetailContent(rightW-4), contentH, 0), dimStyle)
 	return joinBoxes(left, right)
 }
 
 func (m Model) fleetListLines(width int) ([]string, int) {
 	visible := groupedServers(m.snapshot, m.configServers(), m.fleet.filter)
-	cols := fleetColumnLayout(width)
+	cols := fleetColumnLayout(width, m.fleet.expanded)
 	lines := []string{dimStyle.Render(cols.header())}
 	selectedRow := 0
 	previousGroup := ""
@@ -204,44 +215,93 @@ func (m Model) fleetListLines(width int) ([]string, int) {
 	return lines, selectedRow
 }
 
+const (
+	fleetStateWidth = 13 // «⚠ память 98%» — самая длинная формулировка колонки СОСТ
+	fleetNameMin    = 12
+	fleetNameMax    = 24
+	fleetGapWidth   = 2
+	fleetMarker     = "▍ " // маркер выделенной строки, ширина учтена в fixed()
+)
+
 type fleetColumns struct {
-	width int
-	name  int
-	gap   string
+	width  int
+	name   int
+	state  int
+	gap    string
+	uptime bool
+	docker bool
 }
 
-func fleetColumnLayout(width int) fleetColumns {
-	const numeric = 4 + 4 + 6 + 9 + 11
-	const gaps = 5
-	name := max(12, min(24, width-4-numeric-gaps))
-	gap := max(1, min(10, (width-4-numeric-name)/gaps))
-	name = max(name, width-4-numeric-gap*gaps)
-	return fleetColumns{width: width, name: name, gap: strings.Repeat(" ", gap)}
+// fleetColumnLayout выбирает состав колонок по режиму и ширине: UPTIME и DOCKER
+// принадлежат режиму деталей (макет 3b), в списке с сайдбаром их нет (макет 3a).
+// На узком терминале они же уходят первыми — имя хоста и состояние должны
+// оставаться читаемыми на любой ширине.
+func fleetColumnLayout(width int, detailed bool) fleetColumns {
+	cols := fleetColumns{
+		width:  width,
+		state:  fleetStateWidth,
+		gap:    strings.Repeat(" ", fleetGapWidth),
+		uptime: detailed,
+		docker: detailed,
+	}
+	for cols.fixed() > width && (cols.docker || cols.uptime) {
+		if cols.docker {
+			cols.docker = false
+			continue
+		}
+		cols.uptime = false
+	}
+	cols.name = fleetNameMin + max(0, min(fleetNameMax-fleetNameMin, width-cols.fixed()))
+	return cols
 }
 
-func (c fleetColumns) row(name, cpu, mem, load, uptime, docker string) string {
+// fixed — ширина строки при минимальном имени хоста: по ней решается, какие
+// колонки ещё помещаются и сколько места остаётся имени.
+func (c fleetColumns) fixed() int {
+	total, count := fleetNameMin+c.state+4+4+6, 5
+	if c.uptime {
+		total, count = total+7, count+1
+	}
+	if c.docker {
+		total, count = total+11, count+1
+	}
+	return total + fleetGapWidth*(count-1) + len([]rune(fleetMarker))
+}
+
+func (c fleetColumns) row(name, state, cpu, mem, load, uptime, docker string) string {
 	cells := []string{
-		fmt.Sprintf("%-*s", c.name, truncateCells(name, c.name)),
+		// padLabel, а не «%-*s»: ячейка состояния приходит цветной, и ширину
+		// нужно считать по терминальным ячейкам, а не по байтам ANSI-строки.
+		padLabel(truncateCells(name, c.name), c.name),
+		padLabel(state, c.state),
 		fmt.Sprintf("%4s", cpu),
 		fmt.Sprintf("%4s", mem),
 		fmt.Sprintf("%6s", load),
-		fmt.Sprintf("%9s", uptime),
-		docker,
+	}
+	if c.uptime {
+		cells = append(cells, fmt.Sprintf("%7s", uptime))
+	}
+	if c.docker {
+		cells = append(cells, docker)
 	}
 	return strings.Join(cells, c.gap)
 }
 
 func (c fleetColumns) header() string {
-	return "    " + c.row("ИМЯ", "CPU", "MEM", "LOAD", "UPTIME", "DOCKER")
+	return strings.Repeat(" ", len([]rune(fleetMarker))) +
+		c.row("ХОСТ", "СОСТ", "CPU", "MEM", "LOAD", "UPTIME", "DOCKER")
 }
 
 func (m Model) renderFleetRow(index int, cols fleetColumns) string {
 	server := m.snapshot.Servers[index]
 	selected := index == m.selected
-	glyph := statusGlyph(server)
+	issues := issuesForServer(m.snapshot.Issues, server.Name)
+	text := statusRune(server, issues) + " " + truncateCells(statusText(server, issues), max(1, cols.state-2))
+	state := statusStyle(server, issues).Render(text)
 	if selected {
-		// У выделенной строки глиф без своего цвета: вложенный ANSI-reset обрывает фон подсветки.
-		glyph = statusRune(server)
+		// У выделенной строки состояние без своего цвета: вложенный ANSI-reset
+		// обрывает фон подсветки.
+		state = text
 	}
 	cpu, mem, load, uptime := "—", "—", "—", "—"
 	if server.Online {
@@ -250,7 +310,13 @@ func (m Model) renderFleetRow(index int, cols fleetColumns) string {
 		load = fmt.Sprintf("%.2f", server.Load1)
 		uptime = formatUptime(server.Uptime)
 	}
-	row := "  " + glyph + " " + cols.row(server.Name, cpu, mem, load, uptime, dockerCell(server.Docker))
+	// Маркер, а не только фон: выделение обязано читаться и в монохромном
+	// терминале, где подсветка фона может не отрисоваться вовсе.
+	marker := strings.Repeat(" ", len([]rune(fleetMarker)))
+	if selected {
+		marker = fleetMarker
+	}
+	row := marker + cols.row(server.Name, state, cpu, mem, load, uptime, dockerCell(server.Docker))
 	return fleetRowStyle(selected).Width(cols.width).Render(row)
 }
 
@@ -271,45 +337,57 @@ func dockerCell(d collect.DockerCounts) string {
 	return strings.Join(parts, " ")
 }
 
-func statusRune(server collect.Metrics) string {
-	if server.Time.IsZero() {
+func statusRune(server collect.Metrics, issues []collect.Issue) string {
+	switch {
+	case server.Time.IsZero():
 		return "◌"
-	}
-	if !server.Online {
+	case !server.Online:
 		return "×"
+	case len(issues) > 0:
+		return "⚠"
+	default:
+		return "●"
 	}
-	return "●"
 }
 
-func statusGlyph(server collect.Metrics) string {
-	if server.Time.IsZero() {
-		return dimStyle.Render("◌")
+func statusStyle(server collect.Metrics, issues []collect.Issue) lipgloss.Style {
+	switch {
+	case server.Time.IsZero():
+		return dimStyle
+	case !server.Online:
+		return criticalStyle
+	case len(issues) > 0:
+		if worstIssue(issues).Severity == "crit" {
+			return criticalStyle
+		}
+		return warnStyle
+	default:
+		return goodStyle
 	}
-	if !server.Online {
-		return criticalStyle.Render("×")
-	}
-	return goodStyle.Render("●")
 }
 
-func statusText(server collect.Metrics) string {
-	if server.Time.IsZero() {
+// statusText — текст колонки СОСТ рядом с глифом: состояние должно читаться
+// и без цвета, а форма глифа различает только три случая из четырёх.
+func statusText(server collect.Metrics, issues []collect.Issue) string {
+	switch {
+	case server.Time.IsZero():
 		return "ожидание"
+	case !server.Online:
+		return "нет связи"
+	case len(issues) > 0:
+		return worstIssue(issues).Msg
+	default:
+		return "норма"
 	}
-	if !server.Online {
-		return "недоступен"
-	}
-	return "доступен"
 }
 
 func formatUptime(d time.Duration) string {
 	if d <= 0 {
 		return "—"
 	}
-	hours := int(d.Hours())
-	if hours >= 24 {
-		return fmt.Sprintf("%dd%dh", hours/24, hours%24)
-	}
-	return fmt.Sprintf("%dh%dm", hours, int(d.Minutes())%60)
+	// compactDuration уже даёт вид макета («140д»); вторая реализация того же
+	// формата разъезжалась бы с колонкой аптайма контейнеров.
+	return compactDuration(d)
 }
 
 func issuesForServer(issues []collect.Issue, name string) []collect.Issue {
