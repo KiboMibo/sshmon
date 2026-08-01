@@ -125,25 +125,52 @@ func (m Model) configServers() []config.Server {
 	return m.config.Servers
 }
 
+const (
+	// fleetFixedLines — строки, которые есть на экране всегда: шапка, строка
+	// контекста области видимости и строка подсказок внизу.
+	fleetFixedLines = 3
+	// fleetListMin — сколько строк список хостов удерживает за собой при любой
+	// тесноте: рамка панели и две строки. Плитки групп и ящик логов ужимаются
+	// до него, а не за его счёт — под ящиком в макете 3d всегда видны хосты.
+	fleetListMin = panelOverhead + 2
+	// fleetLogboxMin — минимальная высота ящика логов: рамка, строка состояния
+	// и одна строка лога.
+	fleetLogboxMin = panelOverhead + 2
+)
+
 func (m Model) renderFleet() string {
 	m.ensureFleet()
-	head := []string{m.fleetHeader(m.layout.width)}
+	width := m.layout.width
+	// Высота делится честно: сумма частей обязана уложиться в терминал, иначе
+	// composeScreen срежет низ последней панели вместе с её рамкой. Уступают по
+	// приоритету — сначала плитки групп, затем ящик логов, список хостов не
+	// исчезает никогда.
+	budget := max(fleetListMin, m.layout.height-fleetFixedLines)
+	logboxReserve := 0
+	if m.fleet.logbox {
+		logboxReserve = fleetLogboxMin
+	}
+	head := []string{m.fleetHeader(width)}
 	// Плитки групп и две колонки — вопрос ширины, а не отдельного режима:
 	// состав экрана флота один и тот же, ужимается только раскладка.
 	if m.layout.twoColumn() {
-		head = append(head, m.fleetGroupBox(m.layout.width)...)
+		if tiles := m.fleetGroupBox(width); len(tiles) <= budget-fleetListMin-logboxReserve {
+			head = append(head, tiles...)
+			budget -= len(tiles)
+		}
 	}
 	visible := len(groupedServers(m.snapshot, m.configServers(), m.fleet.filter))
-	head = append(head, m.fleetContextLine(visible, m.fleetGroupTotal(), m.layout.width))
-	head = append(head, m.fleetLogboxLines(m.layout.width)...)
-	// Строка подсказок внизу одна на весь экран, поэтому её место резервируем
-	// до расчёта высоты списка.
-	reserved := len(head) + 1
+	head = append(head, m.fleetContextLine(visible, m.fleetGroupTotal(), width))
+	logbox := m.fleetLogboxLines(width, budget-fleetListMin)
+	head = append(head, logbox...)
+	budget -= len(logbox)
 	if m.layout.twoColumn() {
-		head = append(head, strings.Split(m.renderFleetColumns(reserved), "\n")...)
+		head = append(head, strings.Split(m.renderFleetColumns(budget), "\n")...)
 	} else {
-		listLines, _ := m.fleetListLines(m.layout.width)
-		head = append(head, listLines...)
+		// Прокрутка нужна и здесь: ниже 100 колонок это единственная раскладка
+		// списка, и без окна выделенная строка уезжает за нижний край кадра.
+		listLines, selectedRow := m.fleetListLines(width)
+		head = append(head, fitPanelHeight(listLines, budget, fleetScroll(selectedRow, budget, len(listLines)))...)
 	}
 	return strings.Join(append(head, m.fleetFooter()), "\n")
 }
@@ -163,10 +190,10 @@ func (m Model) fleetFooter() string {
 	}
 }
 
-func (m Model) renderFleetColumns(reserved int) string {
-	// Рамка панели забирает две строки, остальное — список: без внешней рамки
-	// экрана высота считается от полного терминала.
-	contentH := max(1, m.layout.height-panelOverhead-reserved)
+// renderFleetColumns рисует колонки списка в отведённые budget строк экрана:
+// рамка панели забирает из них две, остальное достаётся содержимому.
+func (m Model) renderFleetColumns(budget int) string {
+	contentH := max(1, budget-panelOverhead)
 	// Раскрытая карточка и есть детали выбранного хоста, поэтому в этом режиме
 	// сайдбар уступает ей место (макет 3b): иначе те же детали рисуются дважды,
 	// а карточка ужимается в узкую левую колонку.
@@ -271,16 +298,17 @@ func (c fleetColumns) fixed() int {
 
 func (c fleetColumns) row(name, state, cpu, mem, load, uptime, docker string) string {
 	cells := []string{
-		// padLabel, а не «%-*s»: ячейка состояния приходит цветной, и ширину
-		// нужно считать по терминальным ячейкам, а не по байтам ANSI-строки.
+		// padLabel/padLeft, а не «%-*s» и «%7s»: ячейка состояния приходит
+		// цветной, «—» и «140д» — многобайтные, и ширину нужно считать по
+		// терминальным ячейкам, а не по байтам строки.
 		padLabel(truncateCells(name, c.name), c.name),
 		padLabel(state, c.state),
-		fmt.Sprintf("%4s", cpu),
-		fmt.Sprintf("%4s", mem),
-		fmt.Sprintf("%6s", load),
+		padLeft(cpu, 4),
+		padLeft(mem, 4),
+		padLeft(load, 6),
 	}
 	if c.uptime {
-		cells = append(cells, fmt.Sprintf("%7s", uptime))
+		cells = append(cells, padLeft(uptime, 7))
 	}
 	if c.docker {
 		cells = append(cells, docker)
@@ -318,7 +346,9 @@ func (m Model) renderFleetRow(index int, cols fleetColumns) string {
 		marker = fleetMarker
 	}
 	row := marker + cols.row(server.Name, state, cpu, mem, load, uptime, dockerCell(server.Docker))
-	return fleetRowStyle(selected).Width(cols.width).Render(row)
+	// fitLine до Width: слишком длинную строку lipgloss переносит на вторую, и
+	// подсветка выделения растекалась бы на две строки списка.
+	return fleetRowStyle(selected).Width(cols.width).Render(fitLine(row, cols.width))
 }
 
 func dockerCell(d collect.DockerCounts) string {

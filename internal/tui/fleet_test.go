@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -166,6 +168,77 @@ func TestFleetWideDrawsTwoBorderedColumns(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("wide fleet missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestFleetKeepsHostListVisibleUnderTheLogDrawer(t *testing.T) {
+	// Given: экран флота с группой хостов и открытым ящиком логов на низком
+	// терминале — сумма шапки, плиток, ящика и списка в высоту не влезает.
+	for _, height := range []int{16, 20} {
+		t.Run(strconv.Itoa(height), func(t *testing.T) {
+			streamer := &fakeLogStreamer{streams: []collect.LogStream{{
+				Lines:  make(chan string, 1),
+				Errors: make(chan error, 1),
+				Close:  func() error { return nil },
+			}}}
+			m := Model{
+				screen: screenFleet,
+				snapshot: collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+					{Name: "web", Group: "prod", Online: true, Time: time.Now()},
+					{Name: "db", Group: "prod", Online: true, Time: time.Now()},
+					{Name: "cache", Group: "prod", Online: true, Time: time.Now()},
+				}},
+				logSource: streamer,
+				logs:      newLogsScreen(),
+				fleet:     newFleetModel(),
+			}
+			m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 100, Height: height})
+			m, _ = updateModel(t, m, key("l"))
+			for i := range 8 {
+				m.logs.buffer.Append(fmt.Sprintf("19:41:0%d info строка", i))
+			}
+
+			// When: кадр отрисован.
+			view := m.View()
+
+			// Then: на экране остались и ящик, и строка списка, а кадр ровно по
+			// высоте терминала.
+			if lines := strings.Split(view, "\n"); len(lines) != height {
+				t.Fatalf("кадр в %d строк при высоте терминала %d:\n%s", len(lines), height, view)
+			}
+			if !strings.Contains(view, "ЛОГИ · web") {
+				t.Fatalf("ящик логов пропал из кадра:\n%s", view)
+			}
+			if !strings.Contains(view, fleetMarker) {
+				t.Fatalf("под ящиком не осталось ни одной строки списка:\n%s", view)
+			}
+		})
+	}
+}
+
+func TestFleetSingleColumnScrollsToTheSelectedRow(t *testing.T) {
+	// Given: 28 хостов на терминале, где список в одну колонку и не помещается.
+	servers := make([]collect.Metrics, 0, 28)
+	for i := range 28 {
+		servers = append(servers, collect.Metrics{Name: fmt.Sprintf("host-%02d", i), Online: true, Time: time.Now()})
+	}
+	m := Model{
+		screen:   screenFleet,
+		snapshot: collect.Snapshot{Time: time.Now(), Servers: servers},
+		fleet:    newFleetModel(),
+		selected: 27,
+	}
+	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// When: кадр отрисован.
+	view := m.View()
+
+	// Then: список прокручен к выделенной строке, а кадр по высоте терминала.
+	if lines := strings.Split(view, "\n"); len(lines) != 24 {
+		t.Fatalf("кадр в %d строк при высоте терминала 24:\n%s", len(lines), view)
+	}
+	if !strings.Contains(view, "host-27") || !strings.Contains(view, fleetMarker) {
+		t.Fatalf("выделенная строка уехала за нижний край:\n%s", view)
 	}
 }
 
