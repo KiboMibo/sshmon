@@ -244,20 +244,25 @@ func (m Model) fleetListLines(width int) ([]string, int) {
 }
 
 const (
-	fleetStateWidth = 13 // «⚠ память 98%» — самая длинная формулировка колонки СОСТ
-	fleetNameMin    = 12
-	fleetNameMax    = 24
-	fleetGapWidth   = 2
-	fleetMarker     = "▍ " // маркер выделенной строки, ширина учтена в fixed()
+	fleetStateWidth  = 13 // «⚠ память 98%» — самая длинная формулировка колонки СОСТ
+	fleetNameMin     = 12
+	fleetNameMax     = 24
+	fleetGapWidth    = 2
+	fleetDockerWidth = 11   // «●12 ○3 ⚠1» — самый широкий вид ячейки контейнеров
+	fleetMarker      = "▍ " // маркер выделенной строки, ширина учтена в fixed()
 )
 
 type fleetColumns struct {
-	width  int
-	name   int
-	state  int
-	gap    string
-	uptime bool
-	docker bool
+	width int
+	name  int
+	state int
+	gap   string
+	// stretch — распорка между блоком «имя + состояние» и блоком чисел. Без неё
+	// таблица кончалась там, где кончалось самое длинное имя хоста, и правая
+	// половина панели оставалась пустой.
+	stretch int
+	uptime  bool
+	docker  bool
 }
 
 // fleetColumnLayout выбирает состав колонок по режиму и ширине: UPTIME и DOCKER
@@ -280,40 +285,48 @@ func fleetColumnLayout(width int, detailed bool) fleetColumns {
 		cols.uptime = false
 	}
 	cols.name = fleetNameMin + max(0, min(fleetNameMax-fleetNameMin, width-cols.fixed()))
+	// Остаток ширины уходит целиком в распорку: имя хоста длиннее fleetNameMax
+	// не читается лучше, а блок чисел на правом краю панели совпадает с краем
+	// заголовка и не висит в воздухе посреди рамки.
+	cols.stretch = max(0, width-cols.fixed()-(cols.name-fleetNameMin))
 	return cols
 }
 
-// fixed — ширина строки при минимальном имени хоста: по ней решается, какие
-// колонки ещё помещаются и сколько места остаётся имени.
+// fixed — ширина строки при минимальном имени хоста и без распорки: по ней
+// решается, какие колонки ещё помещаются и сколько места остаётся имени.
 func (c fleetColumns) fixed() int {
 	total, count := fleetNameMin+c.state+4+4+6, 5
 	if c.uptime {
 		total, count = total+7, count+1
 	}
 	if c.docker {
-		total, count = total+11, count+1
+		total, count = total+fleetDockerWidth, count+1
 	}
 	return total + fleetGapWidth*(count-1) + len([]rune(fleetMarker))
 }
 
 func (c fleetColumns) row(name, state, cpu, mem, load, uptime, docker string) string {
-	cells := []string{
-		// padLabel/padLeft, а не «%-*s» и «%7s»: ячейка состояния приходит
-		// цветной, «—» и «140д» — многобайтные, и ширину нужно считать по
-		// терминальным ячейкам, а не по байтам строки.
+	// padLabel/padLeft, а не «%-*s» и «%7s»: ячейка состояния приходит цветной,
+	// «—» и «140д» — многобайтные, и ширину нужно считать по терминальным
+	// ячейкам, а не по байтам строки.
+	left := []string{
 		padLabel(truncateCells(name, c.name), c.name),
 		padLabel(state, c.state),
+	}
+	right := []string{
 		padLeft(cpu, 4),
 		padLeft(mem, 4),
 		padLeft(load, 6),
 	}
 	if c.uptime {
-		cells = append(cells, padLeft(uptime, 7))
+		right = append(right, padLeft(uptime, 7))
 	}
 	if c.docker {
-		cells = append(cells, docker)
+		// Ячейка контейнеров держит ширину даже пустой: без неё последняя
+		// колонка гуляла бы по строке и заголовок DOCKER стоял бы не над ней.
+		right = append(right, padLabel(truncateCells(docker, fleetDockerWidth), fleetDockerWidth))
 	}
-	return strings.Join(cells, c.gap)
+	return strings.Join(left, c.gap) + c.gap + strings.Repeat(" ", c.stretch) + strings.Join(right, c.gap)
 }
 
 func (c fleetColumns) header() string {

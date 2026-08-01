@@ -8,9 +8,27 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/kibomibo/sshmon/internal/collect"
 	"github.com/kibomibo/sshmon/internal/config"
 )
+
+// stripANSI убирает из кадра управляющие последовательности: проверки на
+// «строка кончается вплотную к рамке» иначе спотыкались бы о сброс стиля,
+// который стоит между последним числом и границей панели.
+func stripANSI(value string) string {
+	runes := []rune(value)
+	var out strings.Builder
+	for index := 0; index < len(runes); {
+		if runes[index] == 0x1b {
+			index = escapeEnd(runes, index)
+			continue
+		}
+		out.WriteRune(runes[index])
+		index++
+	}
+	return out.String()
+}
 
 func TestFleetRenderAdaptsPreviewAndHasNoTabs(t *testing.T) {
 	// Given an online selected server with metrics and a problem.
@@ -141,6 +159,79 @@ func TestFleetColumnsAppearOnlyWithDetailsAndDegrade(t *testing.T) {
 	}
 	if narrow.name < fleetNameMin {
 		t.Fatalf("host column shrank below the minimum: %+v", narrow)
+	}
+}
+
+// columnEnd — на какой ячейке строки заканчивается value.
+func columnEnd(line, value string) int {
+	index := strings.Index(line, value)
+	if index < 0 {
+		return -1
+	}
+	return lipgloss.Width(line[:index+len(value)])
+}
+
+func TestFleetTableFillsPanelWidth(t *testing.T) {
+	// Given: список хостов на терминалах разной ширины, в обоих режимах колонок.
+	for _, width := range []int{60, 80, 100, 160, 200} {
+		for _, detailed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%d/%v", width, detailed), func(t *testing.T) {
+				cols := fleetColumnLayout(width, detailed)
+				if cols.fixed() > width {
+					// Ширины не хватает даже на минимум — распорки нет, поведение прежнее.
+					if cols.stretch != 0 {
+						t.Fatalf("распорка на тесной раскладке: %+v", cols)
+					}
+					return
+				}
+
+				// When: рисуются заголовок и строка хоста.
+				header := cols.header()
+				row := strings.Repeat(" ", len([]rune(fleetMarker))) +
+					cols.row("vm-prod-emarb", "⚠ память 96%", "2%", "96%", "0.79", "1718д", "●7 ○2 ⚠1")
+
+				// Then: обе строки ровно по ширине панели и колонки совпадают.
+				if got := lipgloss.Width(header); got != width {
+					t.Fatalf("заголовок в %d ячеек при ширине панели %d: %q", got, width, header)
+				}
+				if got := lipgloss.Width(row); got != width {
+					t.Fatalf("строка в %d ячеек при ширине панели %d: %q", got, width, row)
+				}
+				// Смещение считаем в ячейках, а не в байтах: в колонках кириллица.
+				if columnEnd(header, "CPU") != columnEnd(row, "2%") {
+					t.Fatalf("колонка CPU не под своим заголовком:\n%s\n%s", header, row)
+				}
+				if columnEnd(header, "LOAD") != columnEnd(row, "0.79") {
+					t.Fatalf("колонка LOAD не под своим заголовком:\n%s\n%s", header, row)
+				}
+			})
+		}
+	}
+}
+
+func TestFleetTableKeepsNumbersAtTheRightEdge(t *testing.T) {
+	// Given: широкий терминал с сайдбаром — тот случай из скриншота, где таблица
+	// жалась к левому краю панели «СЕРВЕРЫ».
+	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+		{Name: "kava", Group: "main", Online: true, Time: time.Now(), CPUPct: 4, MemPct: 52, Load1: 0.12},
+	}}
+	m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(200, 30)}
+
+	// When: кадр отрисован.
+	view := m.View()
+
+	// Then: строка хоста заканчивается своим последним числом вплотную к рамке.
+	var row string
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "kava") {
+			row = line
+		}
+	}
+	if row == "" {
+		t.Fatalf("строка хоста не найдена:\n%s", view)
+	}
+	if !strings.Contains(stripANSI(row), "0.12 │") {
+		t.Fatalf("числа не дошли до правого края панели: %q", stripANSI(row))
 	}
 }
 
