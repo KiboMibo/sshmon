@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-
-	"github.com/kibomibo/sshmon/internal/sshx"
 )
 
 type LogSourceKind string
@@ -40,16 +38,29 @@ func NewLogRequest(server string, source LogSource) LogRequest {
 	return LogRequest{ID: nextLogRequestID(), Server: server, Source: source}
 }
 
-func (c *Collector) StreamLogs(ctx context.Context, request LogRequest) (sshx.Stream, error) {
+// LogStream — поток строк лога, не зависящий от транспорта. Поля повторяют
+// sshx.Stream, но тип объявлен здесь: экраны TUI работают с логами через
+// collect и не должны знать, что под ними SSH-сессия.
+type LogStream struct {
+	Lines  <-chan string
+	Errors <-chan error
+	Close  func() error
+}
+
+func (c *Collector) StreamLogs(ctx context.Context, request LogRequest) (LogStream, error) {
 	client, err := c.clientFor(request.Server)
 	if err != nil {
-		return sshx.Stream{}, err
+		return LogStream{}, err
 	}
 	command, err := c.logCommand(ctx, request)
 	if err != nil {
-		return sshx.Stream{}, err
+		return LogStream{}, err
 	}
-	return client.StreamContext(ctx, command)
+	stream, err := client.StreamContext(ctx, command)
+	if err != nil {
+		return LogStream{}, err
+	}
+	return LogStream{Lines: stream.Lines, Errors: stream.Errors, Close: stream.Close}, nil
 }
 
 var safeLogName = regexp.MustCompile(`^[A-Za-z0-9_.@:-]+$`)

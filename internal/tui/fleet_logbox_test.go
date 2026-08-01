@@ -7,11 +7,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kibomibo/sshmon/internal/collect"
-	"github.com/kibomibo/sshmon/internal/sshx"
 )
 
 func logboxTestModel() (Model, *fakeLogStreamer) {
-	streamer := &fakeLogStreamer{streams: []sshx.Stream{{
+	streamer := &fakeLogStreamer{streams: []collect.LogStream{{
 		Lines:  make(chan string, 1),
 		Errors: make(chan error, 1),
 		Close:  func() error { return nil },
@@ -78,7 +77,7 @@ func TestFleetLogboxEnterGoesFullScreen(t *testing.T) {
 
 func TestFleetLogboxMovementSwitchesHostAndStream(t *testing.T) {
 	// Given: an open log drawer over a fleet of two hosts.
-	streamer := &fakeLogStreamer{streams: []sshx.Stream{
+	streamer := &fakeLogStreamer{streams: []collect.LogStream{
 		{Lines: make(chan string, 1), Errors: make(chan error, 1), Close: func() error { return nil }},
 		{Lines: make(chan string, 1), Errors: make(chan error, 1), Close: func() error { return nil }},
 	}}
@@ -122,7 +121,7 @@ func TestFleetLogboxMovementSwitchesHostAndStream(t *testing.T) {
 
 func TestFleetLogboxHostSwitchDropsPreviousHostLines(t *testing.T) {
 	// Given: an open log drawer with lines already collected from the first host.
-	streamer := &fakeLogStreamer{streams: []sshx.Stream{
+	streamer := &fakeLogStreamer{streams: []collect.LogStream{
 		{Lines: make(chan string, 1), Errors: make(chan error, 1), Close: func() error { return nil }},
 		{Lines: make(chan string, 1), Errors: make(chan error, 1), Close: func() error { return nil }},
 	}}

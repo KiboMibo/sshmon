@@ -11,18 +11,17 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kibomibo/sshmon/internal/collect"
-	"github.com/kibomibo/sshmon/internal/sshx"
 )
 
 type fakeLogStreamer struct {
 	requests []collect.LogRequest
-	streams  []sshx.Stream
+	streams  []collect.LogStream
 }
 
-func (f *fakeLogStreamer) StreamLogs(_ context.Context, request collect.LogRequest) (sshx.Stream, error) {
+func (f *fakeLogStreamer) StreamLogs(_ context.Context, request collect.LogRequest) (collect.LogStream, error) {
 	f.requests = append(f.requests, request)
 	if len(f.streams) == 0 {
-		return sshx.Stream{}, errors.New("no fake stream")
+		return collect.LogStream{}, errors.New("no fake stream")
 	}
 	stream := f.streams[0]
 	f.streams = f.streams[1:]
@@ -33,7 +32,7 @@ func TestLogsOpenStartsStreamAndIgnoresStaleLines(t *testing.T) {
 	// Given: a dashboard with one server and a controllable log stream.
 	lines := make(chan string, 1)
 	errs := make(chan error, 1)
-	streamer := &fakeLogStreamer{streams: []sshx.Stream{{Lines: lines, Errors: errs, Close: func() error { return nil }}}}
+	streamer := &fakeLogStreamer{streams: []collect.LogStream{{Lines: lines, Errors: errs, Close: func() error { return nil }}}}
 	m := Model{
 		screen:    screenDashboard,
 		snapshot:  snapshotWithServers("web"),
@@ -171,7 +170,7 @@ func TestLogsSourcesComeFromUnitsAndContainers(t *testing.T) {
 
 func TestLogsSourceSwitchRestartsStreamAndDropsLines(t *testing.T) {
 	// Given: a logs screen with a container source discovered on the server.
-	streamer := &fakeLogStreamer{streams: []sshx.Stream{
+	streamer := &fakeLogStreamer{streams: []collect.LogStream{
 		{Lines: make(chan string, 1), Errors: make(chan error, 1), Close: func() error { return nil }},
 		{Lines: make(chan string, 1), Errors: make(chan error, 1), Close: func() error { return nil }},
 	}}

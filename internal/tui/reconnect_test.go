@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/kibomibo/sshmon/internal/collect"
 	"github.com/kibomibo/sshmon/internal/llm"
-	"github.com/kibomibo/sshmon/internal/sshx"
 )
 
 type fakeConnectionManager struct {
@@ -63,7 +63,7 @@ func TestDashboardReconnectRequestsSelectedServer(t *testing.T) {
 
 func TestPassphrasePromptMasksClearsAndRetries(t *testing.T) {
 	// Given reconnect reports that the selected encrypted key needs a passphrase.
-	connections := &fakeConnectionManager{errors: []error{sshx.ErrPassphraseRequired, nil}}
+	connections := &fakeConnectionManager{errors: []error{collect.ErrPassphraseRequired, nil}}
 	m := Model{screen: screenDashboard, snapshot: snapshotWithServers("web"), connections: connections}
 	m, cmd := updateModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, _ = updateModel(t, m, cmd())
@@ -103,7 +103,7 @@ func TestPassphrasePromptFromChatKeepsConversation(t *testing.T) {
 	m.reconnectGeneration = 1
 
 	// When reconnect reports that the key needs a passphrase.
-	m, _ = updateModel(t, m, reconnectResultMsg{server: "web", generation: 1, err: sshx.ErrPassphraseRequired})
+	m, _ = updateModel(t, m, reconnectResultMsg{server: "web", generation: 1, err: collect.ErrPassphraseRequired})
 
 	// Then the prompt takes over the screen without throwing the messages away.
 	if m.overlay != overlayPassphrase {

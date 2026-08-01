@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/kibomibo/sshmon/internal/sshx"
+	"github.com/kibomibo/sshmon/internal/collect"
 )
 
 type connectionManager interface {
@@ -51,7 +51,7 @@ func (m *Model) applyReconnectResult(msg reconnectResultMsg) {
 	if msg.generation != m.reconnectGeneration {
 		return
 	}
-	if errors.Is(msg.err, sshx.ErrPassphraseRequired) || errors.Is(msg.err, sshx.ErrInvalidPassphrase) {
+	if errors.Is(msg.err, collect.ErrPassphraseRequired) || errors.Is(msg.err, collect.ErrInvalidPassphrase) {
 		// Реконнект запускается и из палитры, и из чата: предыдущий оверлей
 		// нельзя оставлять недоделанным. У чата достаточно отменить активный
 		// запрос — переписка не имеет отношения к парольной фразе и переживает

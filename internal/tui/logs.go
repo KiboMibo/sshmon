@@ -17,11 +17,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kibomibo/sshmon/internal/collect"
-	"github.com/kibomibo/sshmon/internal/sshx"
 )
 
 type logStreamer interface {
-	StreamLogs(context.Context, collect.LogRequest) (sshx.Stream, error)
+	StreamLogs(context.Context, collect.LogRequest) (collect.LogStream, error)
 }
 
 // logSelectionStyle — фон выделенной строки. Маркер «▍» слева рисуется всегда:
@@ -43,7 +42,7 @@ type logsScreen struct {
 	err         error
 	generation  uint64
 	cancel      context.CancelFunc
-	stream      sshx.Stream
+	stream      collect.LogStream
 	viewport    viewport.Model
 	ready       bool
 	lastLineAt  time.Time
@@ -62,7 +61,7 @@ type logsScreen struct {
 
 type logsOpenedMsg struct {
 	generation uint64
-	stream     sshx.Stream
+	stream     collect.LogStream
 	err        error
 }
 
@@ -175,11 +174,11 @@ func (m *Model) cancelLogsStream() {
 	}
 	if m.logs.stream.Close != nil {
 		_ = m.logs.stream.Close()
-		m.logs.stream = sshx.Stream{}
+		m.logs.stream = collect.LogStream{}
 	}
 }
 
-func waitLogEvent(generation uint64, stream sshx.Stream) tea.Cmd {
+func waitLogEvent(generation uint64, stream collect.LogStream) tea.Cmd {
 	return func() tea.Msg {
 		lines, errs := stream.Lines, stream.Errors
 		for lines != nil || errs != nil {
