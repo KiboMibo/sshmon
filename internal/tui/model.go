@@ -64,15 +64,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.ensureFleet()
+		// Сравниваем видимость сайдбара до и после изменения размера, а не
+		// статус запроса: статус выходит из diagnosticsIdle навсегда, и
+		// появившийся после расширения терминала сайдбар показывал процессы
+		// того хоста, на котором его видели в прошлый раз. Промежуточные
+		// размеры (перетаскивание рамки окна) видимость не меняют и ничего не
+		// перезапрашивают — иначе каждая ширина слала бы свою ssh-команду.
+		visible := m.fleetSidebarVisible()
 		m.layout = newLayout(msg.Width, msg.Height)
 		m.logs.resize(m.layout.width, m.layout.height)
 		m.resizeOverlay(msg.Width, msg.Height)
-		// Первичная загрузка сайдбара флота: до первого WindowSizeMsg ширина
-		// неизвестна, и видимость сайдбара определить нельзя, а Init() работает
-		// на копии модели и состояние запроса потерял бы. Повторные resize'ы
-		// (перетаскивание рамки окна) ничего не перезапрашивают — иначе каждая
-		// промежуточная ширина слала бы на хост свою ssh-команду.
-		if m.processes.status == diagnosticsIdle {
+		if m.fleetSidebarVisible() != visible {
 			return m, m.startFleetTopProcesses()
 		}
 		return m, nil

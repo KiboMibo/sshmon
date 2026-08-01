@@ -75,6 +75,14 @@ func (m Model) fleetTopMemoryLines(server collect.Metrics, width int) []string {
 
 const fleetTopMemoryCount = 3
 
+// fleetSidebarVisible — виден ли сайдбар флота с разделом «ТОП ПО ПАМЯТИ».
+// Отдельно от startFleetTopProcesses, потому что то же условие проверяет
+// обработчик изменения размера окна: сайдбар появляется и исчезает вместе с
+// шириной терминала.
+func (m Model) fleetSidebarVisible() bool {
+	return m.screen == screenFleet && m.fleet.preview && !m.fleet.expanded && m.layout.twoColumn()
+}
+
 // processMemory переводит долю памяти в абсолютное значение по объёму памяти
 // хоста: в макете колонка подписана «6.1G», а ps отдаёт только проценты.
 func processMemory(process collect.Process, server collect.Metrics) string {
@@ -100,16 +108,19 @@ func processNameAndTail(command string) (string, string) {
 // прошлый запрос снимается по контексту.
 func (m *Model) startFleetTopProcesses() tea.Cmd {
 	m.ensureFleet()
+	// Отмена — до проверки видимости: сайдбар мог пропасть как раз сейчас
+	// («v», раскрытие карточки, сузившийся терминал), и уже идущий `ps`
+	// доигрывал бы по SSH ради данных, которые некуда показать.
+	if m.processes.cancel != nil {
+		m.processes.cancel()
+		m.processes.cancel = nil
+	}
 	// Сайдбара нет — нет и причины ходить по SSH: вне экрана флота, в раскрытом
 	// виде и на узком терминале раздел «ТОП ПО ПАМЯТИ» не рисуется. Условие
 	// живёт здесь, а не на вызывающей стороне: точек вызова несколько
 	// (движение курсора, «v», «←», возврат с дашборда, первый размер окна).
-	if m.screen != screenFleet || !m.fleet.preview || m.fleet.expanded || !m.layout.twoColumn() {
+	if !m.fleetSidebarVisible() {
 		return nil
-	}
-	if m.processes.cancel != nil {
-		m.processes.cancel()
-		m.processes.cancel = nil
 	}
 	m.request++
 	generation := m.request
