@@ -3,6 +3,7 @@ package sshx
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"sync"
 )
@@ -49,15 +50,15 @@ func streamReader(
 	drop func(),
 ) Stream {
 	lines := make(chan string)
-	errors := make(chan error, 1)
+	errCh := make(chan error, 1)
 	finished := make(chan struct{})
 	var closeOnce sync.Once
 	var closeErr error
+	// Закрываем только сессию. ssh.Client общий со сборщиком метрик, поэтому
+	// drop() при штатном выходе из логов стоил бы всему приложению нового
+	// handshake (а с passphrase-ключом без агента — ещё и запроса парольной фразы).
 	closeStream := func() error {
-		closeOnce.Do(func() {
-			closeErr = closeSession()
-			drop()
-		})
+		closeOnce.Do(func() { closeErr = closeSession() })
 		return closeErr
 	}
 
@@ -71,7 +72,7 @@ func streamReader(
 	go func() {
 		defer close(finished)
 		defer close(lines)
-		defer close(errors)
+		defer close(errCh)
 		defer closeStream()
 
 		scanner := bufio.NewScanner(reader)
@@ -84,13 +85,20 @@ func streamReader(
 			}
 		}
 		if err := scanner.Err(); err != nil && ctx.Err() == nil {
-			errors <- err
+			// Слишком длинная строка — дефект данных, а не транспорта: соединение живо.
+			if !errors.Is(err, bufio.ErrTooLong) {
+				drop()
+			}
+			errCh <- err
 			return
 		}
 		if err := wait(); err != nil && ctx.Err() == nil {
-			errors <- err
+			if isTransportFailure(err) {
+				drop()
+			}
+			errCh <- err
 		}
 	}()
 
-	return Stream{Lines: lines, Errors: errors, Close: closeStream}
+	return Stream{Lines: lines, Errors: errCh, Close: closeStream}
 }
