@@ -75,6 +75,32 @@ func TestFleetLogboxEnterGoesFullScreen(t *testing.T) {
 	}
 }
 
+func TestFleetLogboxLeavesGlobalKeysToTheGlobalHandler(t *testing.T) {
+	// Given: открытый ящик логов над списком хостов.
+	m, _ := logboxTestModel()
+	opened, _ := updateModel(t, m, key("l"))
+
+	// When: нажата «c» — справка и README обещают на ней чат.
+	chat, _ := updateModel(t, opened, key("c"))
+
+	// Then: открыт чат, а не «контекст ±5» экрана логов, и ящик на месте.
+	if chat.overlay != overlayChat {
+		t.Fatalf("overlay = %v", chat.overlay)
+	}
+	if chat.logs.contextLines != nil {
+		t.Fatalf("ящик ушёл в режим контекста: %#v", chat.logs.contextLines)
+	}
+	if !chat.fleet.logbox {
+		t.Fatal("ящик закрылся сам собой")
+	}
+
+	// And: «l» повторно закрывает ящик, а не перезапускает поток.
+	closed, cmd := updateModel(t, opened, key("l"))
+	if closed.fleet.logbox || cmd != nil {
+		t.Fatalf("logbox=%v cmd=%v", closed.fleet.logbox, cmd)
+	}
+}
+
 func TestFleetLogboxMovementSwitchesHostAndStream(t *testing.T) {
 	// Given: an open log drawer over a fleet of two hosts.
 	streamer := &fakeLogStreamer{streams: []collect.LogStream{

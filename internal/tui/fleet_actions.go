@@ -42,9 +42,13 @@ func (m *Model) moveFleetBy(delta int) tea.Cmd {
 	return m.startFleetTopProcesses()
 }
 
-func (m Model) openFromFleet(kind screenKind) (tea.Model, tea.Cmd) {
+// openFromFleet уходит с экрана флота на экран kind, попутно поднимая workspace
+// сервера: без него «esc» возвращал бы на дашборд, который никогда не грузился.
+// Приёмник — указатель: тот же переход делает и ящик логов, а он правит модель
+// на месте.
+func (m *Model) openFromFleet(kind screenKind) (tea.Model, tea.Cmd) {
 	if len(m.snapshot.Servers) == 0 {
-		return m, nil
+		return *m, nil
 	}
 	// Ящик логов остаётся открытым за кадром вместе со своим ssh-потоком:
 	// с экрана флота уходим — закрываем и его.
@@ -55,11 +59,11 @@ func (m Model) openFromFleet(kind screenKind) (tea.Model, tea.Cmd) {
 	m.screen = kind
 	switch kind {
 	case screenProcesses, screenPorts, screenContainers:
-		return m, tea.Batch(workspace, m.startDiagnostics())
+		return *m, tea.Batch(workspace, m.startDiagnostics())
 	case screenLogs:
-		return m, tea.Batch(workspace, m.startLogsStream())
+		return *m, tea.Batch(workspace, m.startLogsStream())
 	default:
-		return m, workspace
+		return *m, workspace
 	}
 }
 

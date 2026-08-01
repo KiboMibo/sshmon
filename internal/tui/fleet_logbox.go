@@ -30,9 +30,11 @@ func (m *Model) handleFleetLogboxKey(key tea.KeyMsg) (tea.Cmd, bool) {
 	}
 	switch key.String() {
 	case "enter":
-		m.fleet.logbox = false
-		m.screen = screenLogs
-		return nil, true
+		// Тот же путь, что и «l» из раскрытой карточки: без workspace экран
+		// сервера под логами никогда не грузился, и «esc» высаживал на пустой
+		// дашборд.
+		_, cmd := m.openFromFleet(screenLogs)
+		return cmd, true
 	case "esc":
 		m.closeFleetLogbox()
 		return nil, true
@@ -46,8 +48,14 @@ func (m *Model) handleFleetLogboxKey(key tea.KeyMsg) (tea.Cmd, bool) {
 		return m.moveFleetLogbox(fleetPageSize), true
 	case "end":
 		m.markLogboxSeen()
+		return nil, true
+	case " ", "/", "w", "s", "left", "right", "r":
+		// Белый список: в ящик уходят только клавиши самого потока. Остальное
+		// («c» — чат, «t», «y», «n»/«N», «W») работает с выделенной строкой,
+		// которой в ящике нет, и достаётся глобальному обработчику.
+		return m.handleLogsKey(key)
 	}
-	return m.handleLogsKey(key)
+	return nil, false
 }
 
 // moveFleetLogbox двигает выбор по списку хостов вместе с потоком логов:
@@ -64,13 +72,18 @@ func (m *Model) moveFleetLogbox(delta int) tea.Cmd {
 	return tea.Batch(cmd, stream)
 }
 
-func (m Model) fleetLogboxLines(width int) []string {
+// fleetLogboxLines рисует ящик в height строк экрана, но не больше своей
+// естественной высоты: рамка и строка состояния занимают три строки, остальное
+// достаётся хвосту лога. Хотя бы одна строка лога остаётся всегда — иначе на
+// низком терминале от ящика оставалась бы пустая рамка.
+func (m Model) fleetLogboxLines(width, height int) []string {
 	if !m.fleet.logbox {
 		return nil
 	}
+	tail := max(1, min(fleetLogboxLines, height-panelOverhead-1))
 	visible := m.logs.visibleLines()
 	body := []string{spread(dimStyle.Render(m.fleetLogboxStatus()), dimStyle.Render(m.fleetLogboxCount()), width-4)}
-	start := max(0, len(visible)-fleetLogboxLines)
+	start := max(0, len(visible)-tail)
 	for _, line := range visible[start:] {
 		body = append(body, fitLine(highlightMatches(line, m.logs.filterInput.Value()), width-4))
 	}

@@ -101,6 +101,12 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "left":
 		if m.screen == screenFleet {
+			m.ensureFleet()
+			// Запрос строго по факту сворачивания: удержанная стрелка на уже
+			// свёрнутой карточке иначе слала бы по ssh-команде на нажатие.
+			if !m.fleet.expanded {
+				return m, nil
+			}
 			m.fleet.expanded = false
 			// Детали свернулись — на их место вернулся сайдбар, и его раздел
 			// «ТОП ПО ПАМЯТИ» пуст, пока курсор стоит на месте.
@@ -128,8 +134,9 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.screen == screenFleet {
 			m.ensureFleet()
 			m.fleet.preview = !m.fleet.preview
-			// Выключение сайдбара запроса не порождает: startFleetTopProcesses
-			// сам молчит, когда сайдбара на экране нет.
+			// Выключение сайдбара нового запроса не порождает:
+			// startFleetTopProcesses молчит, когда сайдбара на экране нет, —
+			// но по дороге снимает уже идущий.
 			return m, m.startFleetTopProcesses()
 		}
 	case "enter":
@@ -143,6 +150,12 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// на весь экран уходим из раскрытой карточки или по ctrl+l.
 			if m.fleet.expanded || value == "ctrl+l" {
 				return m.openFromFleet(screenLogs)
+			}
+			// Повторное «l» закрывает ящик, а не открывает заново: перезапуск
+			// потока обнулял бы буфер, и «l» работало бы как «r».
+			if m.fleet.logbox {
+				m.closeFleetLogbox()
+				return m, nil
 			}
 			return m, m.openFleetLogbox()
 		}
