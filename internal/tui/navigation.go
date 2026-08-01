@@ -27,6 +27,13 @@ const (
 
 func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	value := key.String()
+	// ctrl+c разбираем до всех остальных обработчиков: оверлеи и поля ввода
+	// (чат, поиск, палитра, фильтры) забирают клавиши себе, и обещанный справкой
+	// выход был бы из них недостижим. В набираемый текст ctrl+c не попадает.
+	if value == "ctrl+c" {
+		m.closeSubscription()
+		return m, tea.Quit
+	}
 	if cmd, handled := m.handleOverlayKey(key); handled {
 		return m, cmd
 	}
@@ -167,7 +174,7 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.fleet.filter = fleetFilter{}
 			m.selectNearestVisible()
 		}
-	case "q", "ctrl+c":
+	case "q":
 		// Экраны с вводом текста (поиск, чат, фильтры) разбирают клавиши
 		// раньше, поэтому здесь «q» уже не может попасть в набираемый текст.
 		m.closeSubscription()

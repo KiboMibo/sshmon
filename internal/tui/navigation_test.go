@@ -93,6 +93,37 @@ func TestOverlayTakesEscapeAndQuitWorksOnEveryScreen(t *testing.T) {
 	}
 }
 
+func TestCtrlCQuitsWithOverlayOpenAndWhileTyping(t *testing.T) {
+	// Given every overlay that owns a text input, plus the logs filter.
+	overlays := []overlayKind{overlayChat, overlaySearch, overlayPalette, overlayPassphrase, overlayHelp}
+	for _, kind := range overlays {
+		m := Model{screen: screenFleet, snapshot: snapshotWithServers("web")}
+		m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+		if kind == overlayPassphrase {
+			m.passphrase = newPassphraseOverlay("web")
+		}
+		m.openOverlay(kind)
+
+		// When ctrl+c is pressed while the overlay holds the focus.
+		updated, quit := updateModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlC})
+
+		// Then the application quits instead of typing into the input.
+		if quit == nil {
+			t.Fatalf("ctrl+c with overlay %v did not return tea.Quit", kind)
+		}
+		if kind == overlaySearch && updated.search.input.Value() != "" {
+			t.Fatalf("ctrl+c leaked into the search input: %q", updated.search.input.Value())
+		}
+	}
+
+	// And the same holds while the logs filter is being typed.
+	logs := Model{screen: screenLogs, snapshot: snapshotWithServers("web"), logs: newLogsScreen()}
+	logs, _ = updateModel(t, logs, key("/"))
+	if _, quit := updateModel(t, logs, tea.KeyMsg{Type: tea.KeyCtrlC}); quit == nil {
+		t.Fatal("ctrl+c while filtering logs did not return tea.Quit")
+	}
+}
+
 func TestEscapeReturnsDeepScreenToDashboardBeforeFleet(t *testing.T) {
 	// Given a diagnostic screen.
 	m := Model{screen: screenProcesses, snapshot: snapshotWithServers("web")}
