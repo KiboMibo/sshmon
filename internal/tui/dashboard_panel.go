@@ -228,7 +228,7 @@ func (m Model) dashboardUnitsContent() []string {
 
 func (m Model) dashboardLogsContent() []string {
 	if m.dashboard.logs.err != nil {
-		return []string{criticalStyle.Render(m.dashboard.logs.err.Error())}
+		return []string{criticalStyle.Render(errText(m.dashboard.logs.err))}
 	}
 	if len(m.dashboard.logs.lines) == 0 {
 		if m.dashboard.logs.status == diagnosticsLoading {

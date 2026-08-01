@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -125,7 +126,10 @@ func (c *Collector) poll(ctx context.Context, st *serverState) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err != nil {
-		st.m = Metrics{Name: st.cfg.Name, Group: st.cfg.Group, Time: now, Online: false, OS: st.os, Err: sshx.FriendlyErr(err, st.cfg)}
+		// Текст ошибки ssh несёт в себе куски ответа удалённой стороны (баннер,
+		// сообщение sshd), а показывают его карточка хоста и MCP — доверия к нему
+		// не больше, чем к строке лога.
+		st.m = Metrics{Name: st.cfg.Name, Group: st.cfg.Group, Time: now, Online: false, OS: st.os, Err: SanitizeLine(sshx.FriendlyErr(err, st.cfg))}
 		st.prev = nil
 		return err
 	}
@@ -271,5 +275,11 @@ func (c *Collector) TailLog(server string, lines int) (string, error) {
 	cmd := fmt.Sprintf(
 		"journalctl -n %d --no-pager 2>/dev/null || tail -n %d /var/log/syslog 2>/dev/null || tail -n %d /var/log/messages 2>/dev/null || (logread 2>/dev/null | tail -n %d)",
 		lines, lines, lines, lines)
-	return cli.Run(cmd, 20*time.Second)
+	raw, err := cli.Run(cmd, 20*time.Second)
+	if err != nil {
+		return "", err
+	}
+	// MCP отдаёт этот текст наружу другим клиентам, и он тоже попадает в чей-то
+	// терминал. Чистим построчно: разбивку на строки хвост лога должен сохранить.
+	return strings.Join(sanitizeFields(strings.Split(raw, "\n")), "\n"), nil
 }

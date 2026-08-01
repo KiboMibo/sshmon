@@ -22,7 +22,9 @@ func ParseProcesses(raw string) ([]Process, error) {
 	}
 	var out []Process
 	for _, line := range strings.Split(raw, "\n") {
-		fields := strings.Fields(line)
+		// Командная строка чужого процесса попадает в список как есть, а её
+		// содержимое задаёт тот, кто процесс запустил.
+		fields := strings.Fields(SanitizeLine(line))
 		if len(fields) < 2 {
 			continue
 		}
@@ -59,7 +61,9 @@ func ParseContainers(listRaw, statsRaw string) ([]Container, error) {
 	}
 	stats := make(map[string]Container)
 	for _, line := range strings.Split(statsRaw, "\n") {
-		fields := strings.Split(line, "\t")
+		// Чистим поля, а не строку целиком: колонки разделены табуляцией, а
+		// SanitizeLine делает из неё пробел.
+		fields := sanitizeFields(strings.Split(line, "\t"))
 		if len(fields) != 4 {
 			continue
 		}
@@ -67,7 +71,7 @@ func ParseContainers(listRaw, statsRaw string) ([]Container, error) {
 	}
 	var out []Container
 	for _, line := range strings.Split(listRaw, "\n") {
-		fields := strings.Split(line, "\t")
+		fields := sanitizeFields(strings.Split(line, "\t"))
 		if len(fields) < 5 || fields[0] == "" {
 			continue
 		}
@@ -88,6 +92,8 @@ func ParsePorts(raw string) ([]Port, error) {
 	}
 	var out []Port
 	for _, line := range strings.Split(raw, "\n") {
+		// Имя процесса в выводе ss/netstat выбирает владелец процесса.
+		line = SanitizeLine(line)
 		fields := strings.Fields(line)
 		if len(fields) < 5 || !isPortProtocol(fields[0]) {
 			continue

@@ -179,9 +179,9 @@ func diagnosticsFooter(status diagnosticsStatus, err error) string {
 	case diagnosticsUnsupported:
 		return "не поддерживается на сервере · esc назад"
 	case diagnosticsStale:
-		return "устаревшие данные: " + err.Error() + " · esc назад"
+		return "устаревшие данные: " + errText(err) + " · esc назад"
 	case diagnosticsError:
-		return "ошибка: " + err.Error() + " · esc назад"
+		return "ошибка: " + errText(err) + " · esc назад"
 	default:
 		return "только чтение · esc назад"
 	}

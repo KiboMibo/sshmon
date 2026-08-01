@@ -118,7 +118,9 @@ func (c *Collector) LogSnapshot(ctx context.Context, request LogRequest, lines i
 	if trimmed == "" {
 		return nil, nil
 	}
-	return strings.Split(trimmed, "\n"), nil
+	// Снимок минует LogBuffer (его показывает плитка логов на экране сервера),
+	// поэтому чистим здесь.
+	return sanitizeFields(strings.Split(trimmed, "\n")), nil
 }
 
 func (c *Collector) logSnapshotCommand(ctx context.Context, request LogRequest, lines int) (string, error) {
@@ -166,7 +168,11 @@ func NewLogBuffer(maxLines int) *LogBuffer {
 	return &LogBuffer{maxLines: maxLines}
 }
 
+// Append укладывает строку в буфер. Здесь же — граница доверия: строка пришла с
+// удалённого хоста, и дальше её увидят и экран логов, и ящик логов флота, и
+// буфер обмена по «y». Чистим один раз на входе, а не в каждом из них.
 func (b *LogBuffer) Append(line string) {
+	line = SanitizeLine(line)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.version++

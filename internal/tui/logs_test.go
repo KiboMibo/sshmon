@@ -508,3 +508,56 @@ func TestLogsTimeColumnTogglesWithT(t *testing.T) {
 		t.Fatalf("untimed line = %q", got)
 	}
 }
+
+func TestLogsNeverPassRemoteEscapeSequencesToTheTerminal(t *testing.T) {
+	// Given: экран логов, куда чужой процесс написал OSC 52 (перехват буфера
+	// обмена), OSC 0 (подмена заголовка окна) и CSI (порча раскладки).
+	m := logsScreenModel(t,
+		"nginx: \x1b]52;c;ZXZpbA==\x07GET /health",
+		"\x1b]0;pwned\x07docker: started",
+		"\x1b[31mERROR\x1b[2Kdisk full",
+	)
+
+	// When: кадр отрисован.
+	view := m.View()
+
+	// Then: ни одной пришедшей с сервера последовательности в кадре нет,
+	// а текст строк на месте.
+	for _, forbidden := range []string{"\x1b]52", "\x1b]0;", "\x1b[31m", "\x1b[2K"} {
+		if strings.Contains(view, forbidden) {
+			t.Fatalf("кадр содержит %q:\n%q", forbidden, view)
+		}
+	}
+	for _, want := range []string{"GET /health", "docker: started", "ERRORdisk full"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("кадр потерял текст %q:\n%s", want, view)
+		}
+	}
+
+	// And: в теле экрана не осталось управляющих байтов вовсе — двигать курсор
+	// и чистить строки чужому логу нечем, раскладка кадра остаётся за нами.
+	for _, line := range m.logs.visibleLines() {
+		if index := strings.IndexFunc(line, func(r rune) bool { return r < 0x20 || r == 0x7f }); index >= 0 {
+			t.Fatalf("управляющий байт в строке %q на позиции %d", line, index)
+		}
+	}
+}
+
+func TestLogsHighlightIsAppliedOverSanitizedText(t *testing.T) {
+	// Given: строка с CSI-цветом, уложенная в буфер тем же путём, что и живой поток.
+	buffer := collect.NewLogBuffer(10)
+	buffer.Append("\x1b[31mERROR\x1b[0m disk full")
+	line := buffer.Visible()[0]
+
+	// When: поверх неё накладывается подсветка совпадений фильтра.
+	got := highlightMatches(line, "disk")
+
+	// Then: подсвечен ровно текст, а не сдвинутый escape-последовательностями
+	// кусок строки — то есть санитизация прошла раньше подсветки.
+	if want := "ERROR " + warnStyle.Render("disk") + " full"; got != want {
+		t.Fatalf("highlight = %q, want %q", got, want)
+	}
+	if lipgloss.Width(line) != len("ERROR disk full") {
+		t.Fatalf("ширина санитизированной строки = %d", lipgloss.Width(line))
+	}
+}

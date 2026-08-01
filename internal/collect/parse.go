@@ -80,7 +80,10 @@ func parseSample(raw string, at time.Time) *sample {
 	s.c.netRx, s.c.netTx = map[string]uint64{}, map[string]uint64{}
 
 	if h := sec["HOST"]; len(h) > 0 {
-		s.hostname = strings.TrimSpace(h[0])
+		// Всё, что ниже приходит из вывода команд на удалённом хосте и попадает
+		// на экран как текст: имя хоста, дистрибутив, имена ФС, точек монтирования,
+		// дисков и интерфейсов. Чистим на разборе — дальше это уже данные модели.
+		s.hostname = SanitizeLine(strings.TrimSpace(h[0]))
 	}
 	if u := sec["UP"]; len(u) > 0 {
 		if f := strings.Fields(u[0]); len(f) > 0 {
@@ -147,7 +150,7 @@ func parseSample(raw string, at time.Time) *sample {
 		if len(f) < 10 {
 			continue
 		}
-		name := f[2]
+		name := SanitizeLine(f[2])
 		if strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "ram") ||
 			strings.HasPrefix(name, "zram") || strings.HasPrefix(name, "dm-") ||
 			partRe.MatchString(name) {
@@ -162,7 +165,7 @@ func parseSample(raw string, at time.Time) *sample {
 			continue
 		}
 		parts := strings.SplitN(ln, ":", 2)
-		iface := strings.TrimSpace(parts[0])
+		iface := SanitizeLine(strings.TrimSpace(parts[0]))
 		if iface == "lo" {
 			continue
 		}
@@ -186,12 +189,12 @@ func parseSample(raw string, at time.Time) *sample {
 			continue
 		}
 		s.disks = append(s.disks, DiskUsage{
-			Fs: f[0], Mount: f[5],
+			Fs: SanitizeLine(f[0]), Mount: SanitizeLine(f[5]),
 			TotalKB: total, UsedKB: used, AvailKB: avail,
 			UsedPct: 100 * float64(used) / float64(total),
 		})
 	}
-	s.os = parseOSRelease(sec["OS"])
+	s.os = SanitizeLine(parseOSRelease(sec["OS"]))
 	s.ports, _ = ParsePorts(strings.Join(sec["PORTS"], "\n"))
 	for _, ln := range sec["DOCKER"] {
 		if ln = strings.TrimSpace(ln); ln != "" {

@@ -811,7 +811,7 @@ func (m Model) logsState() string {
 func logsStateText(err error, paused bool) string {
 	switch {
 	case err != nil:
-		return "ошибка: " + err.Error()
+		return "ошибка: " + errText(err)
 	case paused:
 		return "хвост на паузе"
 	default:
