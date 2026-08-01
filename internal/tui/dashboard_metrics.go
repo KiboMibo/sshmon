@@ -59,10 +59,9 @@ func diskBars(server collect.Metrics, width int) []string {
 		barW = 8
 	}
 	for _, d := range server.Disks {
-		mount := d.Mount
-		if len(mount) > 12 {
-			mount = mount[:12]
-		}
+		// Обрезка по ячейкам, а не по байтам: срез mount[:12] на UTF-8-пути
+		// («/данные/архив») давал битую руну и ломал выравнивание колонки.
+		mount := truncateCells(d.Mount, 12)
 		bar := gauge(d.UsedPct, barW)
 		label := fmt.Sprintf("%-12s %s %s / %s",
 			mount, bar, kbToGB(d.UsedKB), kbToGB(d.TotalKB))
