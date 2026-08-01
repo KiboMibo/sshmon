@@ -3,7 +3,6 @@ package collect
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/kibomibo/sshmon/internal/sshx"
 )
@@ -36,7 +35,7 @@ func (c *Collector) Containers(ctx context.Context, server string) ([]Container,
 	if err != nil {
 		return nil, err
 	}
-	if strings.Contains(list, unsupportedMarker) {
+	if hasUnsupportedMarker(list) {
 		return nil, ErrUnsupported
 	}
 	stats, err := client.RunContext(ctx, dockerStatsCommand)

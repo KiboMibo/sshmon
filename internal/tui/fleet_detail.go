@@ -57,6 +57,11 @@ func (m Model) fleetTopMemoryLines(server collect.Metrics, width int) []string {
 			return []string{dimStyle.Render("загрузка…")}
 		case diagnosticsUnsupported:
 			return []string{dimStyle.Render("ps недоступен")}
+		case diagnosticsError:
+			// Причину видно только здесь: до отдельного экрана процессов
+			// пользователь не доходит, а «нет данных» на сорванный ssh-запрос
+			// выглядит как «на хосте нет процессов».
+			return []string{dimStyle.Render(fitLine("ps: "+errText(m.processes.err), width))}
 		default:
 			return []string{dimStyle.Render("нет данных")}
 		}

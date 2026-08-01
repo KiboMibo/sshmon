@@ -16,8 +16,23 @@ var (
 	netstatPIDRe = regexp.MustCompile(`^(\d+)/(.+)$`)
 )
 
+// hasUnsupportedMarker ищет маркер отдельной строкой, а не подстрокой в любом
+// месте вывода. Команду на хосте выполняет `sh -c '<вся строка>'`, и сам этот
+// шелл виден в выводе `ps -eo args=` вместе со своим аргументом — включая
+// `echo __SSHMON_UNSUPPORTED__` из ветки «утилиты нет». Подстрочная проверка
+// принимала эту строку за ответ «не поддерживается» и объявляла `ps`
+// недоступным на живом хосте, где ps есть и отработал.
+func hasUnsupportedMarker(raw string) bool {
+	for _, line := range strings.Split(raw, "\n") {
+		if strings.TrimSpace(line) == unsupportedMarker {
+			return true
+		}
+	}
+	return false
+}
+
 func ParseProcesses(raw string) ([]Process, error) {
-	if strings.Contains(raw, unsupportedMarker) {
+	if hasUnsupportedMarker(raw) {
 		return nil, ErrUnsupported
 	}
 	var out []Process
@@ -56,7 +71,7 @@ func ParseProcesses(raw string) ([]Process, error) {
 }
 
 func ParseContainers(listRaw, statsRaw string) ([]Container, error) {
-	if strings.Contains(listRaw, unsupportedMarker) || strings.Contains(statsRaw, unsupportedMarker) {
+	if hasUnsupportedMarker(listRaw) || hasUnsupportedMarker(statsRaw) {
 		return nil, ErrUnsupported
 	}
 	stats := make(map[string]Container)
@@ -87,7 +102,7 @@ func ParseContainers(listRaw, statsRaw string) ([]Container, error) {
 }
 
 func ParsePorts(raw string) ([]Port, error) {
-	if strings.Contains(raw, unsupportedMarker) {
+	if hasUnsupportedMarker(raw) {
 		return nil, ErrUnsupported
 	}
 	var out []Port

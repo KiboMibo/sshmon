@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -232,6 +233,55 @@ func TestFleetTableKeepsNumbersAtTheRightEdge(t *testing.T) {
 	}
 	if !strings.Contains(stripANSI(row), "0.12 │") {
 		t.Fatalf("числа не дошли до правого края панели: %q", stripANSI(row))
+	}
+}
+
+func TestFleetTopMemorySurvivesLiveProcessOutput(t *testing.T) {
+	// Given: сайдбар флота, ждущий ответа `ps`.
+	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+		{Name: "kava", Group: "main", Online: true, Time: time.Now(), MemTotalKB: 8 * 1024 * 1024},
+	}}
+	m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(140, 30)}
+	m.processes.generation, m.processes.status = 7, diagnosticsLoading
+
+	// When: приходит вывод живого хоста — в нём виден шелл нашей же команды с
+	// маркером «утилиты нет» в аргументах.
+	raw := " 28841  0.0  0.0 sh -c command -v ps >/dev/null 2>&1 || { echo __SSHMON_UNSUPPORTED__; exit 0; }; ps -eo pid=,pcpu=,pmem=,args=\n" +
+		" 28842  0.5  9.4 /usr/bin/java -jar app.jar\n"
+	items, err := collect.ParseProcesses(raw)
+	if err != nil {
+		t.Fatalf("вывод живого ps признан неподдерживаемым: %v", err)
+	}
+	loaded, _ := updateModel(t, m, processesResultMsg{generation: 7, items: items})
+
+	// Then: раздел показывает процесс, а не «ps недоступен».
+	view := loaded.View()
+	if !strings.Contains(view, "java") {
+		t.Fatalf("сайдбар не показал топ по памяти:\n%s", view)
+	}
+	for _, unwanted := range []string{"ps недоступен", "нет данных"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("сайдбар показал %q при живых данных:\n%s", unwanted, view)
+		}
+	}
+}
+
+func TestFleetTopMemoryNamesTheReasonInsteadOfNoData(t *testing.T) {
+	// Given: сайдбар флота, чей запрос `ps` сорвался по связи.
+	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+		{Name: "kava", Group: "main", Online: true, Time: time.Now()},
+	}}
+	m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(140, 30)}
+	m.processes.generation, m.processes.status = 7, diagnosticsLoading
+
+	// When: приходит ответ с ошибкой.
+	failed, _ := updateModel(t, m, processesResultMsg{generation: 7, err: errors.New("канал закрыт")})
+
+	// Then: в разделе видна причина, а не «нет данных», которое читается как
+	// «на хосте нет процессов».
+	view := failed.View()
+	if !strings.Contains(view, "канал закрыт") || strings.Contains(view, "нет данных") {
+		t.Fatalf("причина отказа ps не видна:\n%s", view)
 	}
 }
 

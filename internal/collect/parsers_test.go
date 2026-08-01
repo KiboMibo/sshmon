@@ -102,3 +102,36 @@ func TestDiagnosticsParsersReturnUnsupportedMarker(t *testing.T) {
 		}
 	}
 }
+
+func TestParseProcessesIgnoresMarkerInsideCommandLine(t *testing.T) {
+	t.Parallel()
+	// Given: вывод живого `ps`, в котором виден шелл нашей же команды — вместе с
+	// веткой «утилиты нет» и её маркером в аргументах.
+	raw := "  832  0.0  1.2 /usr/lib/systemd/systemd --system\n" +
+		" 28841  0.0  0.0 sh -c " + processesCommand + "\n" +
+		" 28842  0.5  9.4 /usr/bin/java -Xmx2g -jar app.jar\n"
+
+	// When: вывод разбирается.
+	got, err := ParseProcesses(raw)
+
+	// Then: `ps` считается доступным, а процессы разобраны.
+	if err != nil {
+		t.Fatalf("ps объявлен недоступным на живом хосте: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("разобрано %d процессов: %#v", len(got), got)
+	}
+	if got[2].PID != 28842 || got[2].MemPct != 9.4 {
+		t.Fatalf("процесс разобран неверно: %#v", got[2])
+	}
+}
+
+func TestParseProcessesKeepsMarkerOnItsOwnLine(t *testing.T) {
+	t.Parallel()
+	// Given: ответ хоста, где ps действительно нет, — маркер отдельной строкой
+	// с завершающим переводом строки, как его печатает echo.
+	// When/Then: ветка «не поддерживается» по-прежнему срабатывает.
+	if _, err := ParseProcesses(unsupportedMarker + "\n"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("got %v, want ErrUnsupported", err)
+	}
+}
