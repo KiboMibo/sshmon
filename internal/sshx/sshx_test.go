@@ -81,6 +81,42 @@ func TestRunCommandDropsOnTransportFailureButNotOnExitStatus(t *testing.T) {
 	}
 }
 
+func TestCommandOutputKeepsExitStatusOutputButNotPartialTransportOutput(t *testing.T) {
+	t.Parallel()
+	transport := errors.New("connection lost")
+	tests := []struct {
+		name    string
+		out     []byte
+		err     error
+		want    string
+		wantErr error
+	}{
+		{name: "успех", out: []byte("data"), err: nil, want: "data"},
+		{name: "ненулевой код с выводом", out: []byte("data"), err: &ssh.ExitError{}, want: "data"},
+		{name: "ненулевой код без вывода", err: &ssh.ExitError{}, wantErr: &ssh.ExitError{}},
+		{name: "обрыв с частичным выводом", out: []byte("part"), err: transport, wantErr: transport},
+		{name: "обрыв без вывода", err: transport, wantErr: transport},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// Given a finished command with the given output and error.
+			// When its outcome is classified.
+			got, err := commandOutput(tt.out, tt.err)
+			// Then partial output of a broken transport never passes as success.
+			if tt.wantErr != nil {
+				if err == nil || got != "" {
+					t.Fatalf("out=%q err=%v, want error and empty output", got, err)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("out=%q err=%v, want %q and no error", got, err, tt.want)
+			}
+		})
+	}
+}
+
 func TestAuthMethodsRequiresPassphraseForEncryptedKey(t *testing.T) {
 	// Given an encrypted private key and no alternate authentication method.
 	t.Setenv("SSH_AUTH_SOCK", "")

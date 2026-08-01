@@ -149,11 +149,16 @@ func (c *Client) RunContext(ctx context.Context, cmd string) (string, error) {
 	// путь вернулся по отмене контекста: Output() на закрытой сессии сразу отдаёт
 	// ошибку в буферизованный канал и горутина завершается.
 	defer sess.Close()
-	out, err := runCommand(ctx, func() ([]byte, error) { return sess.Output(cmd) }, c.drop)
-	if err != nil {
-		if len(out) > 0 {
-			return string(out), nil
-		}
+	return commandOutput(runCommand(ctx, func() ([]byte, error) { return sess.Output(cmd) }, c.drop))
+}
+
+// commandOutput решает, считать ли вывод завершившейся команды успехом.
+// Ненулевой код возврата с непустым выводом — успех: на нём держатся цепочки
+// `journalctl || tail syslog`. Транспортная ошибка — нет: вывод оборван на
+// середине, и сборщик записал бы обрезанный сэмпл как успешный, с мусорными
+// дельтами по счётчикам.
+func commandOutput(out []byte, err error) (string, error) {
+	if err != nil && (len(out) == 0 || isTransportFailure(err)) {
 		return "", err
 	}
 	return string(out), nil
