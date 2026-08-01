@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/kibomibo/sshmon/internal/sshx"
 )
 
@@ -41,8 +43,8 @@ func TestDashboardReconnectRequestsSelectedServer(t *testing.T) {
 	connections := &fakeConnectionManager{}
 	m := Model{screen: screenDashboard, snapshot: snapshotWithServers("web"), connections: connections}
 
-	// When reconnect is requested and its asynchronous command runs.
-	m, cmd := updateModel(t, m, key("r"))
+	// When reconnect is requested (ctrl+r; plain r обновляет данные) and its asynchronous command runs.
+	m, cmd := updateModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	if cmd == nil {
 		t.Fatal("reconnect command is nil")
 	}
@@ -62,7 +64,7 @@ func TestPassphrasePromptMasksClearsAndRetries(t *testing.T) {
 	// Given reconnect reports that the selected encrypted key needs a passphrase.
 	connections := &fakeConnectionManager{errors: []error{sshx.ErrPassphraseRequired, nil}}
 	m := Model{screen: screenDashboard, snapshot: snapshotWithServers("web"), connections: connections}
-	m, cmd := updateModel(t, m, key("r"))
+	m, cmd := updateModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, _ = updateModel(t, m, cmd())
 	if m.overlay != overlayPassphrase {
 		t.Fatalf("overlay = %v", m.overlay)

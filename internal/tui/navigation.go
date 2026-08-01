@@ -67,9 +67,9 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		return m, m.openOverlay(overlayHelp)
 	case "r":
-		if m.screen == screenDashboard {
-			return m, m.startReconnect()
-		}
+		return m, m.refreshCurrentScreen()
+	case "ctrl+r":
+		return m, m.startReconnect()
 	case "up", "k":
 		if m.screen == screenFleet {
 			return m, m.moveFleetBy(-1)
@@ -124,33 +124,33 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.screen = screenDashboard
 			return m, m.startDashboardWorkspace()
 		}
-	case "l":
+	case "l", "ctrl+l":
 		if m.screen == screenFleet {
-			if m.fleet.expanded {
+			// На списке хостов «l» — ящик логов над списком (отдельная фича),
+			// на весь экран уходим из раскрытой карточки или по ctrl+l.
+			if m.fleet.expanded || value == "ctrl+l" {
 				return m.openFromFleet(screenLogs)
 			}
 			return m, m.openFleetLogbox()
 		}
-	case "x":
-		if m.screen == screenFleet {
-			return m, m.startSSHSession()
+		if m.screen == screenDashboard {
+			m.screen = screenLogs
+			return m, m.startLogsStream()
 		}
-	case "p", "o", "d", "ctrl+h", "ctrl+l":
-		if m.screen == screenFleet && m.fleet.expanded && (value == "p" || value == "o" || value == "d") {
+	case "h", "ctrl+h":
+		if m.screen == screenDashboard {
+			m.screen = screenHistory
+			return m, m.startHistoryQuery()
+		}
+	case "x":
+		return m, m.startSSHSession()
+	case "p", "o", "d":
+		if m.screen == screenFleet && m.fleet.expanded {
 			return m.openFromFleet(dashboardDestination(value))
 		}
 		if m.screen == screenDashboard {
 			m.screen = dashboardDestination(value)
-			if m.screen == screenProcesses || m.screen == screenPorts || m.screen == screenContainers {
-				return m, m.startDiagnostics()
-			}
-			if m.screen == screenHistory {
-				return m, m.startHistoryQuery()
-			}
-			if m.screen == screenLogs {
-				return m, m.startLogsStream()
-			}
-			m.request++
+			return m, m.startDiagnostics()
 		}
 	case "esc":
 		if isDeepScreen(m.screen) {
@@ -168,12 +168,31 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectNearestVisible()
 		}
 	case "q", "ctrl+c":
-		if m.screen == screenFleet {
-			m.closeSubscription()
-			return m, tea.Quit
-		}
+		// Экраны с вводом текста (поиск, чат, фильтры) разбирают клавиши
+		// раньше, поэтому здесь «q» уже не может попасть в набираемый текст.
+		m.closeSubscription()
+		return m, tea.Quit
 	}
 	return m, nil
+}
+
+// refreshCurrentScreen — «обновить сейчас» по макету: принудительный перезапрос
+// данных активного экрана. Логи и история перехватывают «r» своими
+// обработчиками раньше глобального, поэтому их здесь нет. Список хостов
+// опрашивает коллектор по своему таймеру — руками обновлять нечего, кроме
+// раскрытой карточки.
+func (m *Model) refreshCurrentScreen() tea.Cmd {
+	switch m.screen {
+	case screenDashboard:
+		return m.startDashboardWorkspace()
+	case screenProcesses, screenPorts, screenContainers:
+		return m.startDiagnostics()
+	case screenFleet:
+		if m.fleet.expanded {
+			return m.startFleetCardUnits()
+		}
+	}
+	return nil
 }
 
 func dashboardDestination(key string) screenKind {
@@ -182,10 +201,6 @@ func dashboardDestination(key string) screenKind {
 		return screenProcesses
 	case "o":
 		return screenPorts
-	case "ctrl+h":
-		return screenHistory
-	case "ctrl+l":
-		return screenLogs
 	case "d":
 		return screenContainers
 	default:
@@ -195,21 +210,4 @@ func dashboardDestination(key string) screenKind {
 
 func isDeepScreen(kind screenKind) bool {
 	return kind >= screenProcesses && kind <= screenContainers
-}
-
-func overlayTitle(overlay overlayKind) string {
-	switch overlay {
-	case overlayChat:
-		return "Чат"
-	case overlaySearch:
-		return "Поиск"
-	case overlayPalette:
-		return "Команды"
-	case overlayHelp:
-		return "Справка"
-	case overlayPassphrase:
-		return "Passphrase"
-	default:
-		return ""
-	}
 }
