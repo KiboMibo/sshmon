@@ -214,7 +214,7 @@ func (m Model) serverLogsPanel(width, height int) []string {
 }
 
 // serverLogsStatus переиспользует строку состояния полноэкранных логов:
-// «хвост включён» звучит одинаково на обоих экранах. Подсказки называют
+// «хвост вкл» звучит одинаково на обоих экранах. Подсказки называют
 // фактические клавиши экрана сервера, а не раскладку полноэкранных логов.
 func (m Model) serverLogsStatus(width int) string {
 	return spread(dimStyle.Render(logsStateText(m.dashboard.logs.err, false)), dimStyle.Render("l логи · s источник"), width)

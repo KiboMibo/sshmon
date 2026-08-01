@@ -78,7 +78,7 @@ func TestServerLogsTileCarriesTailStateAndHints(t *testing.T) {
 	view := m.View()
 
 	// Then the tile repeats the mockup status row next to its title.
-	for _, want := range []string{"ЛОГИ · SYSTEM", "хвост включён", "l логи · s источник", "system ready"} {
+	for _, want := range []string{"ЛОГИ · SYSTEM", "хвост вкл", "l логи · s источник", "system ready"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("logs tile missing %q:\n%s", want, view)
 		}

@@ -1,10 +1,6 @@
 package tui
 
-import (
-	"fmt"
-
-	tea "github.com/charmbracelet/bubbletea"
-)
+import tea "github.com/charmbracelet/bubbletea"
 
 const fleetLogboxLines = 5
 
@@ -83,7 +79,9 @@ func (m Model) fleetLogboxLines(width int) []string {
 	}
 	// В подсказке ящика только его собственные клавиши: enter/esc/↑↓ ушли в
 	// общую строку статусбара внизу экрана.
-	return panelBoxStyled("ЛОГИ · "+m.selectedName(), "/ фильтр · w уровень · s источник", width, body, dimStyle)
+	// «w warn+», а не «w уровень»: клавиша включает и выключает порог warn+,
+	// перебор всех уровней живёт на «W» и в справке.
+	return panelBoxStyled("ЛОГИ · "+m.selectedName(), "/ фильтр · w warn+ · s источник", width, body, dimStyle)
 }
 
 func (m Model) fleetLogboxStatus() string {
@@ -116,11 +114,13 @@ func (m Model) fleetLogboxLevel() string {
 // fleetLogboxCount — счётчик макета «12 новых · 214 из 8 412». Новыми считаются
 // строки, пришедшие после последней отметки просмотра; переполнение буфера
 // (строки старше maxLines выбрасываются) счётчик новых обнуляет само собой.
+// Разряды группирует та же функция, что и счётчик полноэкранных логов: «8412»
+// и «8 412» на соседних экранах читались бы как разные числа.
 func (m Model) fleetLogboxCount() string {
 	total := m.logs.buffer.Total()
-	hint := fmt.Sprintf("%d из %d", len(m.logs.visibleLines()), total)
+	hint := groupDigits(len(m.logs.visibleLines())) + " из " + groupDigits(total)
 	if fresh := total - m.fleet.logboxSeen; fresh > 0 {
-		hint = fmt.Sprintf("%d новых · ", fresh) + hint
+		hint = groupDigits(fresh) + " новых · " + hint
 	}
 	return hint
 }
