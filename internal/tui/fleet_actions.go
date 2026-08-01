@@ -46,6 +46,11 @@ func (m Model) openFromFleet(kind screenKind) (tea.Model, tea.Cmd) {
 	if len(m.snapshot.Servers) == 0 {
 		return m, nil
 	}
+	// Ящик логов остаётся открытым за кадром вместе со своим ssh-потоком:
+	// с экрана флота уходим — закрываем и его.
+	if m.fleet.logbox {
+		m.closeFleetLogbox()
+	}
 	workspace := m.startDashboardWorkspace()
 	m.screen = kind
 	switch kind {

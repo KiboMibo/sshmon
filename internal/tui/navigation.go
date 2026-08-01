@@ -158,7 +158,9 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "x":
 		return m, m.startSSHSession()
 	case "p", "o", "d":
-		if m.screen == screenFleet && m.fleet.expanded {
+		if m.screen == screenFleet {
+			// Раскрытие карточки для перехода не требуется: сайдбар обещает
+			// «p процессы» и в свёрнутом виде, а выбранный сервер есть всегда.
 			return m.openFromFleet(dashboardDestination(value))
 		}
 		if m.screen == screenDashboard {

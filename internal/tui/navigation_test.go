@@ -58,11 +58,37 @@ func TestDashboardShortcutsOpenOnlyDeepScreens(t *testing.T) {
 
 	// Given Fleet instead of Dashboard.
 	m := Model{screen: screenFleet, snapshot: snapshotWithServers("web")}
-	// When a dashboard-only shortcut is pressed.
-	m, _ = updateModel(t, m, key("p"))
+	// When a dashboard-only shortcut is pressed ("h" opens history only from the server screen).
+	m, _ = updateModel(t, m, key("h"))
 	// Then Fleet remains active.
 	if m.screen != screenFleet {
 		t.Fatalf("fleet shortcut changed screen to %v", m.screen)
+	}
+}
+
+func TestFleetProcessesShortcutWorksWithoutExpandedCard(t *testing.T) {
+	// Given: экран флота со свёрнутой карточкой — сайдбар обещает «p процессы».
+	m := Model{
+		screen:          screenFleet,
+		snapshot:        snapshotWithServers("web", "db"),
+		layout:          newLayout(120, 30),
+		fleet:           newFleetModel(),
+		dashboardSource: &fakeDashboardSource{},
+		selected:        1,
+	}
+
+	// When: нажата «p».
+	opened, cmd := updateModel(t, m, key("p"))
+
+	// Then: открыт экран процессов выбранного сервера, раскрытие карточки не требуется.
+	if opened.screen != screenProcesses || opened.fleet.expanded {
+		t.Fatalf("screen=%v expanded=%v", opened.screen, opened.fleet.expanded)
+	}
+	if cmd == nil || opened.processes.status != diagnosticsLoading {
+		t.Fatalf("диагностика не запущена: cmd=%v status=%v", cmd, opened.processes.status)
+	}
+	if opened.dashboard.server != "db" {
+		t.Fatalf("workspace открыт не для выбранного сервера: %q", opened.dashboard.server)
 	}
 }
 
