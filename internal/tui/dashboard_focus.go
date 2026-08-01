@@ -9,10 +9,10 @@ import (
 )
 
 // Плитки дашборда в порядке обхода фокуса (tab/shift+tab), как в lazydocker.
+// В списке только плитки с рамкой: сетка метрик и сеть рисуются строками
+// экрана, подсвечивать в них фокус нечего, а шаг фокуса «в никуда» сбивает.
 const (
-	tileMetrics uint8 = iota
-	tileSystemd
-	tileNetwork
+	tileSystemd uint8 = iota
 	tileDocker
 	tileLogs
 	numDashboardTiles

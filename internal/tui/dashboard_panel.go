@@ -135,15 +135,30 @@ func fitLogsHeight(content []string, height, scroll int) []string {
 	return content[end-height : end]
 }
 
-func containerStatusDot(status string) string {
+// containerStatusStyle делит контейнеры на те же три группы, что и счётчики
+// collect.DockerCounts: запущен, штатно остановлен, всё остальное — проблема.
+func containerStatusStyle(status string) lipgloss.Style {
 	switch {
 	case strings.HasPrefix(status, "Up"):
-		return goodStyle.Render("●")
-	case strings.HasPrefix(status, "Exited"):
-		return criticalStyle.Render("●")
+		return goodStyle
+	case strings.HasPrefix(status, "Exited"), strings.HasPrefix(status, "Created"):
+		return dimStyle
 	default:
-		return dimStyle.Render("●")
+		return warnStyle
 	}
+}
+
+// containerStatusDot — глиф состояния макета. Форма, а не только цвет:
+// экран должен читаться и в монохромном терминале.
+func containerStatusDot(status string) string {
+	glyph := "⚠"
+	switch {
+	case strings.HasPrefix(status, "Up"):
+		glyph = "●"
+	case strings.HasPrefix(status, "Exited"), strings.HasPrefix(status, "Created"):
+		glyph = "○"
+	}
+	return containerStatusStyle(status).Render(glyph)
 }
 
 func unitStateText(active, sub string) string {
@@ -160,24 +175,35 @@ func unitStateText(active, sub string) string {
 	}
 }
 
-func (m Model) dashboardDockerContent() []string {
-	if len(m.dashboard.containers.items) == 0 || m.dashboard.containers.status == diagnosticsUnsupported || m.dashboard.containers.status == diagnosticsError {
+// dashboardDockerContent — список контейнеров по макету: имя · статус ·
+// аптайм · память. Проценты CPU/MEM ушли: рядом стоит сетка метрик хоста,
+// и вторая процентная шкала в той же ширине только спорит с ней.
+func (m Model) dashboardDockerContent(width int) []string {
+	if !m.dashboardHasDocker() {
 		return []string{criticalStyle.Render("DOCKER NOT RUNNING")}
 	}
-	rows := []string{dimStyle.Render(fmt.Sprintf("%-2s %-14s %-10s %5s %5s  %s", " ", "ИМЯ", "СТАТУС", "CPU", "MEM", "ПОРТЫ"))}
+	const statusWidth, uptimeWidth, memoryWidth = 14, 5, 6
+	nameWidth := max(8, min(24, width-statusWidth-uptimeWidth-memoryWidth-5))
+	rows := make([]string, 0, len(m.dashboard.containers.items))
 	for _, container := range m.dashboard.containers.items {
-		rows = append(rows, fmt.Sprintf("%s %-14s %-10s %4.0f%% %4.0f%%  %s",
-			containerStatusDot(container.Status),
-			truncateCells(container.Name, 14),
-			truncateCells(container.Status, 10),
-			container.CPUPct, container.MemPct,
-			truncateCells(container.Ports, 20)))
+		style := containerStatusStyle(container.Status)
+		memory := containerMemory(container.MemUsage)
+		rows = append(rows, containerStatusDot(container.Status)+" "+
+			padLabel(style.Render(truncateCells(container.Name, nameWidth)), nameWidth)+" "+
+			padLabel(truncateCells(containerStatus(container.Status), statusWidth), statusWidth)+" "+
+			padLabel(containerUptime(container.RunningFor), uptimeWidth)+" "+
+			padLeft(memory, memoryWidth))
 	}
 	return rows
 }
 
-func dashboardNetworkContent(server collect.Metrics) []string {
-	return netTable(server)
+// padLeft выравнивает значение по правому краю колонки шириной width,
+// считая ячейки терминала: значения в колонке памяти читают по разряду.
+func padLeft(value string, width int) string {
+	if pad := width - lipgloss.Width(value); pad > 0 {
+		return strings.Repeat(" ", pad) + value
+	}
+	return value
 }
 
 func (m Model) dashboardUnitsContent() []string {

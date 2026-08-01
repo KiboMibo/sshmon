@@ -10,5 +10,4 @@ var (
 	criticalStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
 	focusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	warnStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	frameStyle    = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("241"))
 )

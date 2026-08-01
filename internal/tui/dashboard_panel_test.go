@@ -83,34 +83,31 @@ func TestDashboardProblemsPanelWrapsFullIssueWithoutTruncation(t *testing.T) {
 	}
 }
 
-func TestDashboardWideDrawsBorderedPanelsWithLocalHints(t *testing.T) {
-	// Given a wide dashboard with metrics, running Docker, systemd units, and logs.
-	m := dashboardWorkspaceFixture()
-	m.layout = newLayout(120, 30)
-	m.dashboard.containers.items = []collect.Container{{Name: "api", Status: "Up", CPUPct: 3, MemPct: 4}}
+func TestServerScreenDrawsBorderedPanelsWithLocalHints(t *testing.T) {
+	// Given a server screen with metrics, running Docker, systemd units, and logs.
+	m := serverScreenModel(120, 30)
 
-	// When the dashboard is rendered on a wide terminal.
+	// When the screen is rendered.
 	view := m.View()
 
-	// Then every panel is framed and carries its own data-local hint in the border.
+	// Then every panel is framed and carries its own data-local hint.
 	for _, want := range []string{
 		"╭", "╮", "╰", "╯",
-		"h история",
 		"d контейнеры",
 		"f фильтр · j/k · enter journal",
-		"l логи · s системный лог",
+		"o порты",
+		"l логи · s источник",
 	} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("wide dashboard missing %q:\n%s", want, view)
+			t.Fatalf("server screen missing %q:\n%s", want, view)
 		}
 	}
 }
 
-func TestDashboardWideHasNoNoDataFiller(t *testing.T) {
+func TestServerScreenHasNoNoDataFiller(t *testing.T) {
 	t.Parallel()
-	// Given a wide dashboard where SYSTEMD has many units but МЕТРИКИ is short.
-	m := dashboardWorkspaceFixture()
-	m.layout = newLayout(160, 50)
+	// Given a server screen where СЕРВИСЫ has many units but the grid is short.
+	m := serverScreenModel(160, 50)
 	units := make([]collect.SystemdUnit, 25)
 	for i := range units {
 		units[i] = collect.SystemdUnit{Name: "svc" + string(rune('a'+i)) + ".service", Active: "active", Sub: "running"}
@@ -143,17 +140,20 @@ func TestFitPanelHeightPadsAndScrolls(t *testing.T) {
 	}
 }
 
-func TestContainerStatusDotDerivesFromStatus(t *testing.T) {
+func TestContainerStatusDotSeparatesRunningStoppedAndBroken(t *testing.T) {
 	t.Parallel()
 	// Given container statuses in various states.
 	// When the status dot is derived.
-	up := containerStatusDot("Up 2 hours")
-	exited := containerStatusDot("Exited (0) 5 min ago")
-	paused := containerStatusDot("Paused")
-	// Then every status emits the dot glyph.
-	for _, dot := range []string{up, exited, paused} {
-		if !strings.Contains(dot, "●") {
-			t.Fatalf("dot glyph missing: %q", dot)
+	// Then each group gets its own glyph, различимый и без цвета.
+	for _, tc := range []struct{ status, want string }{
+		{"Up 2 hours", "●"},
+		{"Exited (0) 5 min ago", "○"},
+		{"Created", "○"},
+		{"Restarting (1) 3 seconds ago", "⚠"},
+		{"Paused", "⚠"},
+	} {
+		if got := containerStatusDot(tc.status); !strings.Contains(got, tc.want) {
+			t.Fatalf("containerStatusDot(%q) = %q, want %q", tc.status, got, tc.want)
 		}
 	}
 }
@@ -181,26 +181,28 @@ func TestUnitStateTextColorsByActiveSub(t *testing.T) {
 	}
 }
 
-func TestDockerContentShowsStatusDotAndPorts(t *testing.T) {
+func TestDockerContentShowsStateUptimeAndMemory(t *testing.T) {
 	t.Parallel()
-	// Given a dashboard with one running container exposing ports.
+	// Given a dashboard with a running and a stopped container.
 	m := dashboardWorkspaceFixture()
-	m.dashboard.containers = dashboardContainersState{
-		items:  []collect.Container{{Name: "api", Status: "Up 2 hours", Ports: "0.0.0.0:8080->80/tcp", CPUPct: 3, MemPct: 4}},
-		status: diagnosticsReady,
-	}
+	m.dashboard.containers = dashboardContainersState{status: diagnosticsReady, items: []collect.Container{
+		{Name: "pg-main", Status: "Up 20 weeks", RunningFor: "20 weeks ago", MemUsage: "6.1GiB / 15.6GiB", Ports: "0.0.0.0:5432->5432/tcp", CPUPct: 3, MemPct: 4},
+		{Name: "mailhog", Status: "Exited (0) 12 days ago", RunningFor: "12 days ago", MemUsage: "0B / 0B"},
+	}}
+
 	// When docker content is rendered.
-	content := m.dashboardDockerContent()
-	// Then it shows a status dot, the container name, and the ports string.
-	joined := strings.Join(content, "\n")
-	if !strings.Contains(joined, "●") {
-		t.Fatalf("missing status dot: %s", joined)
+	joined := strings.Join(m.dashboardDockerContent(45), "\n")
+
+	// Then each row is «имя · статус · аптайм · память» без процентов и портов.
+	for _, want := range []string{"● ", "pg-main", "up", "140д", "6.1G", "○ ", "mailhog", "exited (0)", "12д"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("docker content missing %q:\n%s", want, joined)
+		}
 	}
-	if !strings.Contains(joined, "api") {
-		t.Fatalf("missing container name: %s", joined)
-	}
-	if !strings.Contains(joined, "8080") {
-		t.Fatalf("missing ports: %s", joined)
+	for _, forbidden := range []string{"%", "5432->5432"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("docker content still shows %q:\n%s", forbidden, joined)
+		}
 	}
 }
 
@@ -227,12 +229,10 @@ func TestSystemdContentColorsStateText(t *testing.T) {
 	}
 }
 
-func TestDashboardWideDockerAndServicesShareRowLogsBelow(t *testing.T) {
+func TestServerScreenDockerAndServicesShareRowLogsBelow(t *testing.T) {
 	t.Parallel()
-	// Given a wide dashboard with running Docker.
-	m := dashboardWorkspaceFixture()
-	m.layout = newLayout(120, 30)
-	m.dashboard.containers = dashboardContainersState{items: []collect.Container{{Name: "api", Status: "Up"}}, status: diagnosticsReady}
+	// Given a server screen wide enough for two columns.
+	m := serverScreenModel(120, 30)
 	// When the full view is rendered.
 	view := m.View()
 	// Then DOCKER and СЕРВИСЫ share one row and ЛОГИ sits below them.
@@ -252,9 +252,28 @@ func TestDashboardWideDockerAndServicesShareRowLogsBelow(t *testing.T) {
 		}
 	}
 	if dockerLine < 0 || servicesLine != dockerLine {
-		t.Fatalf("row misaligned: DOCKER=%d СЕРВИСЫ=%d", dockerLine, servicesLine)
+		t.Fatalf("row misaligned: DOCKER=%d СЕРВИСЫ=%d\n%s", dockerLine, servicesLine, view)
 	}
 	if logsLine <= dockerLine {
-		t.Fatalf("ЛОГИ=%d must be below row=%d", logsLine, dockerLine)
+		t.Fatalf("ЛОГИ=%d must be below row=%d\n%s", logsLine, dockerLine, view)
+	}
+}
+
+func TestServerScreenStacksPanelsOnEightyColumns(t *testing.T) {
+	t.Parallel()
+	// Given the same screen on eighty columns.
+	m := serverScreenModel(80, 24)
+
+	// When the view is rendered.
+	view := m.View()
+
+	// Then the same blocks stack in one column in the mockup order.
+	previous := -1
+	for _, section := range []string{"DOCKER", "СЕРВИСЫ", "ПОРТЫ", "ЛОГИ"} {
+		position := strings.Index(view, section)
+		if position <= previous {
+			t.Fatalf("section %q is missing or out of order:\n%s", section, view)
+		}
+		previous = position
 	}
 }

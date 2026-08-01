@@ -293,13 +293,21 @@ func (l *logsScreen) refresh() {
 }
 
 func (m Model) logsState() string {
-	if m.logs.err != nil {
-		return "ошибка: " + m.logs.err.Error()
-	}
-	if m.logs.paused {
+	return logsStateText(m.logs.err, m.logs.paused)
+}
+
+// logsStateText — общая формулировка состояния хвоста для полноэкранных логов
+// и плитки логов на экране сервера: один и тот же поток не должен называться
+// на двух экранах по-разному.
+func logsStateText(err error, paused bool) string {
+	switch {
+	case err != nil:
+		return "ошибка: " + err.Error()
+	case paused:
 		return "хвост на паузе"
+	default:
+		return "хвост включён"
 	}
-	return "хвост включён"
 }
 
 func logSourceLabel(source collect.LogSource) string {

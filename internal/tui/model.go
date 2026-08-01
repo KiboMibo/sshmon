@@ -165,8 +165,9 @@ func (m Model) View() string {
 	if m.overlay != overlayNone {
 		overlay = m.renderOverlay()
 	}
-	body := composeScreen(m.renderScreen(), overlay, m.layout)
-	return frameStyle.Width(m.layout.width).Height(m.layout.height).Render(body)
+	// Внешней рамки у кадра нет (макет): экран занимает весь терминал,
+	// рамки остаются только у отдельных плиток.
+	return composeScreen(m.renderScreen(), overlay, m.layout)
 }
 
 func (m Model) renderScreen() string {

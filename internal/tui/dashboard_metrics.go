@@ -26,83 +26,77 @@ func loadColorStyle(load float64, numCPU int) string {
 	}
 }
 
-// kbToGB converts kilobytes to a rounded gibibyte string.
-func kbToGB(kb uint64) string {
-	const kbPerGB = 1024 * 1024
-	if kb == 0 {
-		return "0 ГБ"
+// serverMetricGrid — четыре однородные строки макета: CPU / MEM / NET / DISK.
+// Все четыре рисует один примитив metricRow, поэтому спарклайн, процент и
+// детали стоят в одних и тех же колонках при любой ширине ≥ 60.
+//
+// Спарклайны пока пустые: ряды живут в internal/history и загружаются только
+// экраном «История» под выбранный там сервер. Показывать на экране сервера
+// чужой или замороженный тренд хуже, чем заглушку; как только появится ряд,
+// привязанный к текущему выбору, его достаточно передать сюда.
+func serverMetricGrid(server collect.Metrics, width int) []string {
+	diskPct, diskDetails := metricNoPercent, dimStyle.Render("диски не найдены")
+	if disk, ok := fullestDisk(server); ok {
+		diskPct, diskDetails = disk.UsedPct, diskUsageDetails(disk)
 	}
-	return fmt.Sprintf("%d ГБ", kb/kbPerGB)
+	return []string{
+		metricRow("CPU", nil, server.CPUPct, cpuDetails(server), width),
+		metricRow("MEM", nil, server.MemPct, memoryDetails(server), width),
+		metricRow("NET", nil, metricNoPercent, networkDetails(server), width),
+		metricRow("DISK", nil, diskPct, diskDetails, width),
+	}
 }
 
-// diskPctColor picks a style for a disk usage percentage.
-func diskPctColor(pct float64) string {
-	switch {
-	case pct >= 90:
-		return criticalStyle.Render(fmt.Sprintf("%.0f%%", pct))
-	case pct >= 75:
-		return warnStyle.Render(fmt.Sprintf("%.0f%%", pct))
-	default:
-		return goodStyle.Render(fmt.Sprintf("%.0f%%", pct))
-	}
-}
-
-// diskBars renders per-mount progress bars with used/free GB labels.
-// Each row: `<mount> <gauge> <used> / <total>`; no `max` aggregate.
-func diskBars(server collect.Metrics, width int) []string {
-	if len(server.Disks) == 0 {
-		return []string{dimStyle.Render("диски не найдены")}
-	}
-	rows := make([]string, 0, len(server.Disks))
-	barW := width / 3
-	if barW < 8 {
-		barW = 8
-	}
-	for _, d := range server.Disks {
-		// Обрезка по ячейкам, а не по байтам: срез mount[:12] на UTF-8-пути
-		// («/данные/архив») давал битую руну и ломал выравнивание колонки.
-		mount := truncateCells(d.Mount, 12)
-		bar := gauge(d.UsedPct, barW)
-		label := fmt.Sprintf("%-12s %s %s / %s",
-			mount, bar, kbToGB(d.UsedKB), kbToGB(d.TotalKB))
-		rows = append(rows, fitLine(label, width))
-	}
-	return rows
-}
-
-// dashboardMetricsContent renders the reformed metrics panel body:
-// longer CPU bar, load values (colored, no LOAD label), blank line,
-// MEM bar with RAM/SWAP under it, blank line, ДИСКИ header + per-mount
-// bars + IO line. Problems are NOT included here (moved to top strip).
-func dashboardMetricsContent(server collect.Metrics, width int, compact bool) []string {
-	barW := max(10, width-18)
-	loadLine := fmt.Sprintf("%s  %s  %s  %s · %d ядер",
+func cpuDetails(server collect.Metrics) string {
+	return fmt.Sprintf("%s %s %s %s",
+		dimStyle.Render("load"),
 		loadColorStyle(server.Load1, server.NumCPU),
 		loadColorStyle(server.Load5, server.NumCPU),
-		loadColorStyle(server.Load15, server.NumCPU),
-		dimStyle.Render("load"),
-		server.NumCPU)
-	indent := 8 + max(0, (barW-lipgloss.Width(loadLine))/2)
-	loadLine = strings.Repeat(" ", indent) + loadLine
+		loadColorStyle(server.Load15, server.NumCPU))
+}
 
-	rows := []string{
-		fmt.Sprintf("%s  %s  %3.0f%%", titleStyle.Render(padLabel("CPU", 6)), gauge(server.CPUPct, barW), server.CPUPct),
-		loadLine,
+func memoryDetails(server collect.Metrics) string {
+	used := server.MemTotalKB - min(server.MemTotalKB, server.MemAvailKB)
+	details := fmt.Sprintf("%s / %s", byteValue(float64(used)*1024), byteValue(float64(server.MemTotalKB)*1024))
+	if server.SwapTotalKB == 0 {
+		return details
 	}
-	if !compact {
-		rows = append(rows, "")
+	swapUsed := server.SwapTotalKB - min(server.SwapTotalKB, server.SwapFreeKB)
+	return details + fmt.Sprintf("   %s %s / %s", dimStyle.Render("swap"),
+		byteValue(float64(swapUsed)*1024), byteValue(float64(server.SwapTotalKB)*1024))
+}
+
+func networkDetails(server collect.Metrics) string {
+	var rx, tx float64
+	for _, device := range server.Net {
+		rx += device.RxBps
+		tx += device.TxBps
 	}
-	rows = append(rows,
-		fmt.Sprintf("%s  %s  %3.0f%%", titleStyle.Render(padLabel("ПАМЯТЬ", 6)), gauge(server.MemPct, barW), server.MemPct),
-		memoryText(server),
-		"SWAP     "+swapText(server),
-	)
-	if !compact {
-		rows = append(rows, "")
+	return fmt.Sprintf("%s %s/s   %s %s/s", dimStyle.Render("rx"), byteValue(rx), dimStyle.Render("tx"), byteValue(tx))
+}
+
+// fullestDisk выбирает самый заполненный раздел: строка DISK в сетке одна,
+// и показывать в ней надо тот раздел, который кончится первым.
+func fullestDisk(server collect.Metrics) (collect.DiskUsage, bool) {
+	if len(server.Disks) == 0 {
+		return collect.DiskUsage{}, false
 	}
-	rows = append(rows, titleStyle.Render("ДИСКИ / IO")+"  "+diskText(server))
-	rows = append(rows, diskBars(server, width)...)
-	return rows
+	fullest := server.Disks[0]
+	for _, disk := range server.Disks[1:] {
+		if disk.UsedPct > fullest.UsedPct {
+			fullest = disk
+		}
+	}
+	return fullest, true
+}
+
+func diskUsageDetails(disk collect.DiskUsage) string {
+	details := fmt.Sprintf("%s / %s   %s",
+		byteValue(float64(disk.UsedKB)*1024), byteValue(float64(disk.TotalKB)*1024), disk.Mount)
+	if device := strings.TrimPrefix(disk.Fs, "/dev/"); device != "" {
+		details += " (" + device + ")"
+	}
+	return details
 }
 
 func padLabel(label string, width int) string {

@@ -10,44 +10,43 @@ import (
 )
 
 // TestDashboardTileFocusCyclesWithTab verifies that tab advances focus and shift+tab steps back.
-// Given: a Dashboard model with focus on the metrics tile.
+// Given: a server screen focused on services.
 // When:  the user presses tab, tab, shift+tab, tab.
-// Then:  focus advances metrics→systemd→network, steps back to systemd, then advances to network.
+// Then:  focus walks the framed tiles only — services→docker→logs and back.
 func TestDashboardTileFocusCyclesWithTab(t *testing.T) {
 	m := dashboardWorkspaceFixture()
-	m.layout = newLayout(120, 30)
-	m.dashboard.tileFocus = tileMetrics
+	m.dashboard.tileFocus = tileSystemd
 
 	// When: press tab (next tile).
 	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = m2.(Model)
-	// Then: focus is now systemd.
-	if m.dashboard.tileFocus != tileSystemd {
-		t.Errorf("after tab: focus = %d, want %d (systemd)", m.dashboard.tileFocus, tileSystemd)
+	// Then: focus is now docker.
+	if m.dashboard.tileFocus != tileDocker {
+		t.Errorf("after tab: focus = %d, want %d (docker)", m.dashboard.tileFocus, tileDocker)
 	}
 
 	// When: press tab again.
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = m2.(Model)
-	// Then: focus is now network.
-	if m.dashboard.tileFocus != tileNetwork {
-		t.Errorf("after second tab: focus = %d, want %d (network)", m.dashboard.tileFocus, tileNetwork)
+	// Then: focus is now logs.
+	if m.dashboard.tileFocus != tileLogs {
+		t.Errorf("after second tab: focus = %d, want %d (logs)", m.dashboard.tileFocus, tileLogs)
 	}
 
 	// When: press shift+tab (previous tile).
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
 	m = m2.(Model)
-	// Then: focus steps back to systemd.
-	if m.dashboard.tileFocus != tileSystemd {
-		t.Errorf("after shift+tab: focus = %d, want %d (systemd)", m.dashboard.tileFocus, tileSystemd)
+	// Then: focus steps back to docker.
+	if m.dashboard.tileFocus != tileDocker {
+		t.Errorf("after shift+tab: focus = %d, want %d (docker)", m.dashboard.tileFocus, tileDocker)
 	}
 
 	// When: press tab (next tile).
 	m2, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = m2.(Model)
-	// Then: focus advances to network.
-	if m.dashboard.tileFocus != tileNetwork {
-		t.Errorf("after final tab: focus = %d, want %d (network)", m.dashboard.tileFocus, tileNetwork)
+	// Then: focus advances to logs.
+	if m.dashboard.tileFocus != tileLogs {
+		t.Errorf("after final tab: focus = %d, want %d (logs)", m.dashboard.tileFocus, tileLogs)
 	}
 }
 
@@ -57,7 +56,6 @@ func TestDashboardTileFocusCyclesWithTab(t *testing.T) {
 // Then:  the log scroll offset increments then decrements.
 func TestDashboardScrollJMovesWithinFocusedTile(t *testing.T) {
 	m := dashboardWorkspaceFixture()
-	m.layout = newLayout(120, 30)
 	m.dashboard.tileFocus = tileLogs
 	m.dashboard.tileScrolls[tileLogs] = 0
 
@@ -85,7 +83,6 @@ func TestDashboardScrollJMovesWithinFocusedTile(t *testing.T) {
 // Then:  unitUI.cursor increments (legacy behavior preserved when focused on systemd).
 func TestDashboardSystemdFocusPreservesCursorBehavior(t *testing.T) {
 	m := dashboardWorkspaceFixture()
-	m.layout = newLayout(120, 30)
 	m.dashboard.units.items = []collect.SystemdUnit{
 		{Name: "sshd.service", Active: "active", Sub: "running"},
 		{Name: "cron.service", Active: "active", Sub: "running"},
@@ -104,14 +101,14 @@ func TestDashboardSystemdFocusPreservesCursorBehavior(t *testing.T) {
 }
 
 // TestDashboardRendersFocusIndicatorOnActiveTile verifies the focused tile gets a green border.
-// Given: a wide Dashboard with focus on the metrics tile.
+// Given: a server screen with focus on the docker tile.
 // When:  the border style is resolved per tile.
 // Then:  the focused tile uses focusStyle (green) and others stay dim.
 func TestDashboardRendersFocusIndicatorOnActiveTile(t *testing.T) {
 	m := dashboardWorkspaceFixture()
-	m.dashboard.tileFocus = tileMetrics
+	m.dashboard.tileFocus = tileDocker
 
-	if m.tileBorderStyle(tileMetrics).GetForeground() != focusStyle.GetForeground() {
+	if m.tileBorderStyle(tileDocker).GetForeground() != focusStyle.GetForeground() {
 		t.Errorf("focused tile must use the green focus border")
 	}
 	if m.tileBorderStyle(tileSystemd).GetForeground() != dimStyle.GetForeground() {
@@ -119,11 +116,11 @@ func TestDashboardRendersFocusIndicatorOnActiveTile(t *testing.T) {
 	}
 }
 
-// TestDashboardLogsWideShowsBottomThirdHeight verifies the logs panel uses ~1/3 of body height in wide mode.
-// Given: a wide Dashboard at 120×30 (body height ≈ 21 after frame and footer).
-// When:  rendering the view with a ready system log containing 15 lines.
-// Then:  the ЛОГИ panel shows at least 7 visible log lines (≥1/3 of body).
-func TestDashboardLogsWideShowsBottomThirdHeight(t *testing.T) {
+// TestDashboardLogsTakeTheRemainingHeight verifies the logs tile grows into the leftover height.
+// Given: a tall server screen with a ready system log of fifteen lines.
+// When:  the view is rendered.
+// Then:  the logs tile shows every line — logs take what the middle row left.
+func TestDashboardLogsTakeTheRemainingHeight(t *testing.T) {
 	m := dashboardWorkspaceFixture()
 	m.layout = newLayout(120, 40)
 	m.dashboard.logs.status = diagnosticsReady
@@ -134,14 +131,13 @@ func TestDashboardLogsWideShowsBottomThirdHeight(t *testing.T) {
 
 	view := m.View()
 
-	// Count distinct log lines rendered inside the ЛОГИ panel.
 	count := 0
 	for _, line := range m.dashboard.logs.lines {
 		if strings.Contains(view, line) {
 			count++
 		}
 	}
-	if count < 7 {
-		t.Errorf("wide logs panel showed %d lines, want ≥7 (bottom third of body)", count)
+	if count != len(m.dashboard.logs.lines) {
+		t.Errorf("logs tile showed %d of %d lines:\n%s", count, len(m.dashboard.logs.lines), view)
 	}
 }

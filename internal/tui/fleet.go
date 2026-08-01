@@ -124,14 +124,16 @@ func (m Model) configServers() []config.Server {
 func (m Model) renderFleet() string {
 	m.ensureFleet()
 	head := []string{m.fleetHeader(m.layout.width)}
-	if m.layout.wide {
+	// Плитки групп и две колонки — вопрос ширины, а не отдельного режима:
+	// состав экрана флота один и тот же, ужимается только раскладка.
+	if m.layout.twoColumn() {
 		head = append(head, m.fleetGroupBox(m.layout.width)...)
 	}
 	visible := len(groupedServers(m.snapshot, m.configServers(), m.fleet.filter))
 	head = append(head, m.fleetContextLine(visible, m.fleetGroupTotal(), m.layout.width))
 	head = append(head, m.fleetLogboxLines(m.layout.width)...)
-	if m.layout.wide {
-		return strings.Join(head, "\n") + "\n" + m.renderFleetWide(len(head))
+	if m.layout.twoColumn() {
+		return strings.Join(head, "\n") + "\n" + m.renderFleetColumns(len(head))
 	}
 	listLines, _ := m.fleetListLines(m.layout.width)
 	footer := dimStyle.Render("↑↓ enter открыть · → детали · / поиск · f проблемы · tab группа · v панель · ? ещё")
@@ -144,8 +146,10 @@ func (m Model) renderFleet() string {
 	return strings.Join(append(head, listLines...), "\n") + "\n" + footer
 }
 
-func (m Model) renderFleetWide(reserved int) string {
-	contentH := max(1, m.layout.height-3-reserved)
+func (m Model) renderFleetColumns(reserved int) string {
+	// Рамка панели забирает две строки, остальное — список: без внешней рамки
+	// экрана высота считается от полного терминала.
+	contentH := max(1, m.layout.height-panelOverhead-reserved)
 	if !m.fleet.preview {
 		hint := "v боковая панель · / поиск · tab группа · f проблемы"
 		if m.fleet.expanded {

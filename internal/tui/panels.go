@@ -73,9 +73,14 @@ func seriesRange(values []*float64) (low, high float64) {
 }
 
 const (
-	metricRowLabelWidth   = 7  // самая длинная метка сетки — «ПАМЯТЬ» — плюс пробел
+	metricRowLabelWidth   = 7  // «DISK» плюс отбивка до спарклайна, как в макете
 	metricRowPercentWidth = 4  // «100%»
 	metricRowSparkMax     = 30 // шире тренд не читается лучше, остаток отдаём деталям
+
+	// metricNoPercent — договор с metricRow: у строки нет процентной шкалы
+	// (так у NET — байты/с в проценты не переводятся), колонка процента
+	// остаётся пустой, но её ширина сохраняется, иначе детали разъедутся.
+	metricNoPercent = -1.0
 )
 
 // metricRow рисует одну строку сетки метрик экрана сервера:
@@ -90,11 +95,29 @@ func metricRow(label string, series []*float64, percent float64, details string,
 
 	row := padLabel(truncateCells(label, metricRowLabelWidth), metricRowLabelWidth) +
 		gap + historySparkline(series, sparkWidth) +
-		gap + fmt.Sprintf("%*.0f%%", metricRowPercentWidth-1, max(0, min(100, percent)))
+		gap + metricPercentCell(percent)
 	if details != "" && detailsWidth > 0 {
-		row += gap + truncateCells(details, detailsWidth)
+		// fitLine, а не truncateCells: детали приходят цветными (load, swap, rx),
+		// и обрезка по рунам разорвала бы ANSI-последовательность.
+		row += gap + fitLine(details, detailsWidth)
 	}
 	return fitLine(row, width)
+}
+
+func metricPercentCell(percent float64) string {
+	if percent < 0 {
+		return strings.Repeat(" ", metricRowPercentWidth)
+	}
+	value := min(100, percent)
+	cell := fmt.Sprintf("%*.0f%%", metricRowPercentWidth-1, value)
+	switch {
+	case value >= 90:
+		return criticalStyle.Render(cell)
+	case value >= 75:
+		return warnStyle.Render(cell)
+	default:
+		return cell
+	}
 }
 
 func percentLine(label string, value float64, width int) string {

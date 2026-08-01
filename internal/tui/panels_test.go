@@ -179,6 +179,36 @@ func TestMetricRowRendersPlaceholderAndFullPercent(t *testing.T) {
 	}
 }
 
+func TestMetricRowLeavesPercentColumnEmptyWithoutScale(t *testing.T) {
+	// Дано: у NET процента нет (байты/с), у CPU — есть.
+	value := 10.0
+	net := metricRow("NET", []*float64{&value}, metricNoPercent, "rx 1.2M/s", 80)
+	cpu := metricRow("CPU", []*float64{&value}, 16, "load 1.19", 80)
+
+	// Тогда: колонка процента у NET пустая, но ширину держит — детали обеих
+	// строк начинаются в одной колонке.
+	if strings.Contains(net, "%") {
+		t.Fatalf("у строки без шкалы не должно быть процента: %q", net)
+	}
+	if got, want := runeIndexOf(net, "rx"), runeIndexOf(cpu, "load"); got != want || got < 0 {
+		t.Fatalf("детали разъехались: %d vs %d (%q / %q)", got, want, net, cpu)
+	}
+}
+
+func TestMetricRowKeepsStyledDetailsIntact(t *testing.T) {
+	// Дано: детали приходят цветными, а ширины на них не хватает.
+	details := "\x1b[2mload 1.19 0.98 0.71\x1b[0m"
+
+	// Когда: строка сетки рисуется в узкий терминал.
+	row := metricRow("CPU", nil, 16, details, 60)
+
+	// Тогда: ширина соблюдена, а ANSI-последовательности целы.
+	if lipgloss.Width(row) > 60 {
+		t.Fatalf("metricRow width = %d, want <= 60: %q", lipgloss.Width(row), row)
+	}
+	assertCompleteEscapes(t, row)
+}
+
 // runeIndexOf возвращает позицию подстроки в ячейках, а не в байтах:
 // глифы спарклайна многобайтовые, байтовый индекс о выравнивании не говорит.
 func runeIndexOf(value, substring string) int {

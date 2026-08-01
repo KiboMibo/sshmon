@@ -1,80 +1,14 @@
 package tui
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/kibomibo/sshmon/internal/collect"
 )
-
-func TestDashboardWidePanelsNeverOverflowTerminalWidth(t *testing.T) {
-	// Given a wide dashboard with loaded Docker, systemd, and log data at several terminal sizes.
-	for _, size := range []struct{ w, h int }{{120, 30}, {160, 40}} {
-		m := dashboardWorkspaceFixture()
-		m.dashboard.containers.items = []collect.Container{{Name: "api", Status: "Up", CPUPct: 3, MemPct: 4}}
-		m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: size.w, Height: size.h})
-
-		// When the bordered dashboard is rendered.
-		view := m.View()
-
-		// Then every visual line fits the terminal width and panel borders are drawn.
-		for i, line := range strings.Split(view, "\n") {
-			if width := lipgloss.Width(line); width > size.w {
-				t.Fatalf("%dx%d line %d width = %d > %d: %q", size.w, size.h, i, width, size.w, line)
-			}
-		}
-		for _, glyph := range []string{"╭", "╮", "╰", "╯"} {
-			if !strings.Contains(view, glyph) {
-				t.Fatalf("%dx%d view misses panel border glyph %q:\n%s", size.w, size.h, glyph, view)
-			}
-		}
-	}
-}
-
-func TestDashboardThreeRowWideLayoutShowsWorkspacePanels(t *testing.T) {
-	// Given a wide dashboard with metrics and loaded Docker, systemd, and log data.
-	m := dashboardWorkspaceFixture()
-	m.layout = newLayout(160, 50)
-	m.dashboard.containers.items = []collect.Container{{Name: "api", Status: "Up", CPUPct: 3, MemPct: 4}}
-
-	// When the dashboard is rendered.
-	view := m.View()
-
-	// Then all workspace panels expose their operational data and controls.
-	for _, want := range []string{"CPU", "ДИСКИ / IO", "DOCKER", "api", "СЕТЬ", "СЕРВИСЫ", "sshd.service", "ЛОГИ · SYSTEM", "system ready", "f фильтр", "s системный лог"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("wide dashboard missing %q:\n%s", want, view)
-		}
-	}
-}
-
-func TestDashboardThreeRowNarrowLayoutStacksPanelsInSemanticOrder(t *testing.T) {
-	// Given a narrow dashboard whose Docker source is unavailable.
-	m := dashboardWorkspaceFixture()
-	m.layout = newLayout(80, 24)
-	m.dashboard.containers.status = diagnosticsUnsupported
-
-	// When the dashboard is rendered.
-	view := m.View()
-
-	// Then panels stack metrics, Docker, network, systemd, and logs without exceeding the terminal.
-	sections := []string{"CPU", "DOCKER NOT RUNNING", "СЕТЬ", "SYSTEMD", "ЛОГИ · SYSTEM"}
-	previous := -1
-	for _, section := range sections {
-		position := strings.Index(view, section)
-		if position <= previous {
-			t.Fatalf("section %q is missing or out of order:\n%s", section, view)
-		}
-		previous = position
-	}
-	if lines := strings.Count(view, "\n") + 1; lines > 24 {
-		t.Fatalf("narrow dashboard uses %d lines:\n%s", lines, view)
-	}
-}
 
 func TestDashboardUnitFilterNavigationAndJournalSelection(t *testing.T) {
 	// Given a dashboard with three running services and a recording log source.
@@ -136,11 +70,33 @@ func TestDashboardUnitClearReturnsToSystemLog(t *testing.T) {
 	}
 }
 
+func TestServerLogsTileCarriesTailStateAndHints(t *testing.T) {
+	// Given a server screen with a loaded system log.
+	m := serverScreenModel(120, 30)
+
+	// When the logs tile is rendered.
+	view := m.View()
+
+	// Then the tile repeats the mockup status row next to its title.
+	for _, want := range []string{"ЛОГИ · SYSTEM", "хвост включён", "l логи · s источник", "system ready"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("logs tile missing %q:\n%s", want, view)
+		}
+	}
+
+	// And when the log request failed, the same row reports the error.
+	m.dashboard.logs.err = errors.New("journalctl: no such unit")
+	if !strings.Contains(m.View(), "ошибка: ") {
+		t.Fatalf("logs tile hides the error state:\n%s", m.View())
+	}
+}
+
 func dashboardWorkspaceFixture() Model {
 	now := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
 	return Model{
 		screen:   screenDashboard,
 		selected: 0,
+		layout:   newLayout(120, 30),
 		snapshot: collect.Snapshot{Time: now, Servers: []collect.Metrics{{
 			Name: "web", Hostname: "web-01", Online: true, Time: now, Uptime: 25 * time.Hour,
 			NumCPU: 4, CPUPct: 25, Load1: 0.4, Load5: 0.3, Load15: 0.2,
