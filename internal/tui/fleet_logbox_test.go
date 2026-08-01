@@ -149,6 +149,55 @@ func TestFleetLogboxHostSwitchDropsPreviousHostLines(t *testing.T) {
 	}
 }
 
+func TestFleetLogboxCountsLinesArrivedSinceLastLook(t *testing.T) {
+	// Given: an open log drawer on a filtered level.
+	m, _ := logboxTestModel()
+	opened, cmd := updateModel(t, m, key("l"))
+	if cmd != nil {
+		cmd()
+	}
+
+	// When: three lines arrive after the drawer was opened.
+	for _, line := range []string{"info started", "WARN disk almost full", "ERROR failed to write"} {
+		opened.logs.buffer.Append(line)
+	}
+
+	// Then: the counter reports them as new next to the visible/total pair.
+	if hint := opened.fleetLogboxCount(); hint != "3 новых · 3 из 3" {
+		t.Fatalf("hint = %q", hint)
+	}
+	if view := opened.View(); !strings.Contains(view, "3 новых") {
+		t.Fatalf("drawer misses the new-lines counter:\n%s", view)
+	}
+
+	// When: the user scrolls back to the tail.
+	seen, _ := updateModel(t, opened, tea.KeyMsg{Type: tea.KeyEnd})
+
+	// Then: nothing is new any more until the next line arrives.
+	if hint := seen.fleetLogboxCount(); hint != "3 из 3" {
+		t.Fatalf("hint after end = %q", hint)
+	}
+	seen.logs.buffer.Append("info one more")
+	if hint := seen.fleetLogboxCount(); hint != "1 новых · 4 из 4" {
+		t.Fatalf("hint after a fresh line = %q", hint)
+	}
+}
+
+func TestFleetLogboxStatusFollowsLayoutWording(t *testing.T) {
+	// Given: a drawer streaming a journal unit filtered from warnings up.
+	m, _ := logboxTestModel()
+	m.logs.sources = []collect.LogSource{{Kind: collect.LogJournal, Name: "postgres"}}
+	m.logs.level = logLevelWarn
+
+	// When: the drawer status line is built.
+	status := m.fleetLogboxStatus()
+
+	// Then: the source is short and the level reads as a threshold.
+	if !strings.HasPrefix(status, "postgres · warn+ · ") {
+		t.Fatalf("status = %q", status)
+	}
+}
+
 func TestLogsLevelAxisFiltersAndCounts(t *testing.T) {
 	// Given: a logs screen holding lines of mixed severity.
 	logs := newLogsScreen()
