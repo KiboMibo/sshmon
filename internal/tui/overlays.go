@@ -83,7 +83,7 @@ func (m Model) renderOverlay() string {
 	case overlayPassphrase:
 		content = m.renderPassphrase()
 	}
-	box := overlayStyle.Copy().BorderStyle(lipgloss.RoundedBorder()).Padding(1, 2)
+	box := overlayStyle.BorderStyle(lipgloss.RoundedBorder()).Padding(1, 2)
 	rendered := box.Render(content)
 	if m.layout.width > 0 && lipgloss.Width(rendered) > m.layout.width {
 		// Width задаёт содержимое без рамки — под неё вычитаем две ячейки.

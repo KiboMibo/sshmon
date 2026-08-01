@@ -81,7 +81,7 @@ func abs(value int) int {
 
 func fleetRowStyle(selected bool) lipgloss.Style {
 	if selected {
-		return focusStyle.Copy().Background(lipgloss.AdaptiveColor{Light: "254", Dark: "236"})
+		return focusStyle.Background(lipgloss.AdaptiveColor{Light: "254", Dark: "236"})
 	}
 	return dimStyle
 }
