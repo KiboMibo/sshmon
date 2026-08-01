@@ -97,7 +97,11 @@ func (m *Model) executePalette(item paletteItem) tea.Cmd {
 	case paletteOpenHelp:
 		return m.openOverlay(overlayHelp)
 	case paletteOpenServer:
+		// Смена хоста обязана перезапустить workspace (он сам отменяет
+		// предыдущий), иначе на дашборде остаются юниты, docker и логи
+		// прошлого сервера.
 		m.selected, m.screen = item.server, screenDashboard
+		return m.startDashboardWorkspace()
 	case paletteOpenProcesses:
 		m.screen = screenProcesses
 		return m.startDiagnostics()
