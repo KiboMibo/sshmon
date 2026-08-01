@@ -56,6 +56,21 @@ func TestParseContainersCombinesListAndStats(t *testing.T) {
 	}
 }
 
+func TestParseContainersKeepsRunningFor(t *testing.T) {
+	t.Parallel()
+	// Given docker list output with the uptime column.
+	list := "abc123\tweb\tnginx:latest\tUp 2 hours\t0.0.0.0:8080->80/tcp\t3 weeks ago\n"
+	// When it is parsed.
+	got, err := ParseContainers(list, "")
+	// Then the raw relative uptime reaches the UI untouched.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].RunningFor != "3 weeks ago" {
+		t.Fatalf("got %#v", got)
+	}
+}
+
 func TestParsePortsPreservesProcessAndPID(t *testing.T) {
 	t.Parallel()
 	// Given ss output with TCP/UDP listeners and one malformed row.

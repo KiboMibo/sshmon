@@ -115,6 +115,45 @@ func TestSetPassphraseForwardsOwnedSecretToSelectedServer(t *testing.T) {
 	}
 }
 
+func TestSnapshotOwnsItsSliceFields(t *testing.T) {
+	// Given a collector holding metrics with slice fields.
+	collector := newReconnectTestCollector("web", &fakePollRunner{})
+	collector.states[0].m.Disks = []DiskUsage{{Mount: "/", UsedPct: 10}}
+
+	// When a snapshot is taken and the collector keeps polling.
+	snapshot := collector.Snapshot()
+	collector.states[0].m.Disks[0].UsedPct = 99
+
+	// Then the published snapshot is unaffected by later collector writes.
+	if got := snapshot.Servers[0].Disks[0].UsedPct; got != 10 {
+		t.Fatalf("snapshot disk usage = %v, want 10 (slice shared with collector state)", got)
+	}
+}
+
+func TestReconnectStopsWithCollectorLifetime(t *testing.T) {
+	// Given a collector whose run context has been cancelled.
+	runner := &blockingRunner{started: make(chan struct{}, 1)}
+	collector := newReconnectTestCollector("web", runner)
+	collector.cfg.Interval = time.Hour
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		collector.RunWithSink(ctx, nil)
+	}()
+	<-runner.started
+	cancel()
+	<-done
+
+	// When a reconnect is requested after shutdown.
+	err := collector.Reconnect("web")
+
+	// Then it does not start an unbounded poll of its own.
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Reconnect() error = %v, want context.Canceled", err)
+	}
+}
+
 func newReconnectTestCollector(name string, runner pollRunner) *Collector {
 	server := config.Server{Name: name}
 	return &Collector{

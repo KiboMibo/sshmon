@@ -95,6 +95,32 @@ func TestParseSample(t *testing.T) {
 	}
 }
 
+func TestParseOSRelease(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  []string
+		want string
+	}{
+		{name: "id и версия", raw: []string{`ID=debian`, `VERSION_ID="12"`, `PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"`}, want: "debian 12"},
+		{name: "без версии", raw: []string{`ID=arch`, `PRETTY_NAME="Arch Linux"`}, want: "Arch Linux"},
+		{name: "пусто", raw: nil, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseOSRelease(tt.raw); got != tt.want {
+				t.Errorf("parseOSRelease = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseSampleReadsOSSection(t *testing.T) {
+	s := parseSample(rawFixture+"@@OS\nID=debian\nVERSION_ID=\"12\"\n", time.Unix(1000, 0))
+	if s.os != "debian 12" {
+		t.Errorf("os = %q", s.os)
+	}
+}
+
 func TestRates(t *testing.T) {
 	t0 := time.Unix(1000, 0)
 	prev := &counters{

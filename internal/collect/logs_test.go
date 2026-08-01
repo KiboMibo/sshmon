@@ -24,6 +24,24 @@ func TestLogBufferEvictsOldestLinesAtCapacity(t *testing.T) {
 	}
 }
 
+func TestLogBufferKeepsWindowAcrossCompaction(t *testing.T) {
+	t.Parallel()
+	// Given a small buffer fed far past its capacity (several compaction rounds).
+	buffer := NewLogBuffer(4)
+	for i := range 20 {
+		buffer.Append(fmt.Sprintf("l%02d", i))
+	}
+	// When the retained window is read.
+	got := buffer.Visible()
+	// Then it holds exactly the newest lines in chronological order.
+	if want := []string{"l16", "l17", "l18", "l19"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("window = %#v, want %#v", got, want)
+	}
+	if buffer.Total() != 4 {
+		t.Fatalf("total = %d, want 4", buffer.Total())
+	}
+}
+
 func TestLogBufferPauseRetainsInputWithoutAdvancingView(t *testing.T) {
 	t.Parallel()
 	// Given a buffer paused after two visible lines.

@@ -20,6 +20,11 @@ const sampleCmd = `echo @@HOST; hostname 2>/dev/null; ` +
 	`echo @@PORTS; ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null; ` +
 	`echo @@DOCKER; docker ps -a --format '{{.Status}}' 2>/dev/null`
 
+// sampleCmdWithOS — тот же сэмпл плюс /etc/os-release. Шлём его, только пока
+// дистрибутив сервера неизвестен: он не меняется, а лишний cat на каждом тике
+// не нужен. Обе команды — константы, подстановки в них нет.
+const sampleCmdWithOS = sampleCmd + `; echo @@OS; cat /etc/os-release 2>/dev/null`
+
 // counters — сырые счётчики одного сэмпла; скорости считаются по двум сэмплам.
 type counters struct {
 	at       time.Time
@@ -35,6 +40,7 @@ type counters struct {
 type sample struct {
 	c        counters
 	hostname string
+	os       string
 	uptime   time.Duration
 	load1    float64
 	load5    float64
@@ -185,6 +191,7 @@ func parseSample(raw string, at time.Time) *sample {
 			UsedPct: 100 * float64(used) / float64(total),
 		})
 	}
+	s.os = parseOSRelease(sec["OS"])
 	s.ports, _ = ParsePorts(strings.Join(sec["PORTS"], "\n"))
 	for _, ln := range sec["DOCKER"] {
 		if ln = strings.TrimSpace(ln); ln != "" {
@@ -192,6 +199,28 @@ func parseSample(raw string, at time.Time) *sample {
 		}
 	}
 	return s
+}
+
+// parseOSRelease собирает короткое имя дистрибутива из /etc/os-release:
+// «ID VERSION_ID» («debian 12»), а если версии нет — PRETTY_NAME.
+func parseOSRelease(lines []string) string {
+	fields := make(map[string]string, len(lines))
+	for _, ln := range lines {
+		key, value, ok := strings.Cut(strings.TrimSpace(ln), "=")
+		if !ok {
+			continue
+		}
+		fields[key] = strings.Trim(value, `"'`)
+	}
+	id, version := fields["ID"], fields["VERSION_ID"]
+	switch {
+	case id != "" && version != "":
+		return id + " " + version
+	case fields["PRETTY_NAME"] != "":
+		return fields["PRETTY_NAME"]
+	default:
+		return id
+	}
 }
 
 // rates считает скорости по дельтам двух сэмплов.

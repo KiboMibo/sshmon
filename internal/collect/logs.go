@@ -138,6 +138,7 @@ type LogBuffer struct {
 	mu       sync.RWMutex
 	maxLines int
 	lines    []string
+	start    int // индекс первой актуальной строки в lines
 	paused   bool
 	frozen   []string
 	filter   string
@@ -154,16 +155,33 @@ func (b *LogBuffer) Append(line string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.lines = append(b.lines, line)
-	if excess := len(b.lines) - b.maxLines; excess > 0 {
-		b.lines = append([]string(nil), b.lines[excess:]...)
+	if len(b.lines)-b.start > b.maxLines {
+		b.start++
 	}
+	// Сдвиг пачкой, а не на каждой строке: при живом `journalctl -f` копирование
+	// всего буфера на каждую строку было O(n) на строку. Один сдвиг на maxLines
+	// вставок даёт амортизированное O(1); цена — до 2×maxLines заголовков строк.
+	if b.start >= b.maxLines {
+		kept := copy(b.lines, b.lines[b.start:])
+		clear(b.lines[kept:]) // хвост держал бы ссылки на уже выброшенные строки
+		b.lines = b.lines[:kept]
+		b.start = 0
+	}
+}
+
+// window — актуальные строки буфера в хронологическом порядке (только под mu).
+func (b *LogBuffer) window() []string {
+	if b.paused {
+		return b.frozen
+	}
+	return b.lines[b.start:]
 }
 
 func (b *LogBuffer) SetPaused(paused bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if paused && !b.paused {
-		b.frozen = append([]string(nil), b.lines...)
+		b.frozen = append([]string(nil), b.lines[b.start:]...)
 	}
 	if !paused {
 		b.frozen = nil
@@ -180,19 +198,13 @@ func (b *LogBuffer) SetFilter(filter string) {
 func (b *LogBuffer) Total() int {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	if b.paused {
-		return len(b.frozen)
-	}
-	return len(b.lines)
+	return len(b.window())
 }
 
 func (b *LogBuffer) Visible() []string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	lines := b.lines
-	if b.paused {
-		lines = b.frozen
-	}
+	lines := b.window()
 	if b.filter == "" {
 		return append([]string(nil), lines...)
 	}

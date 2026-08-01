@@ -73,6 +73,10 @@ func ParseContainers(listRaw, statsRaw string) ([]Container, error) {
 		}
 		container := stats[fields[0]]
 		container.ID, container.Name, container.Image, container.Status, container.Ports = fields[0], fields[1], fields[2], fields[3], fields[4]
+		// Колонка RunningFor добавлена позже — старый вывод без неё остаётся валидным.
+		if len(fields) >= 6 {
+			container.RunningFor = strings.TrimSpace(fields[5])
+		}
 		out = append(out, container)
 	}
 	return out, nil
