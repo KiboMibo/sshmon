@@ -116,6 +116,12 @@ func (m *Model) handleOverlayKey(key tea.KeyMsg) (tea.Cmd, bool) {
 		return m.handlePaletteKey(key), true
 	case overlayPassphrase:
 		return m.handlePassphraseKey(key), true
+	case overlayHelp:
+		// Справка сама обещает «esc / ? — закрыть», поэтому «?» обязан закрывать.
+		if key.String() == "?" {
+			m.closeOverlay()
+		}
+		return nil, true
 	default:
 		return nil, true
 	}
