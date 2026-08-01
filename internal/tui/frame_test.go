@@ -78,6 +78,22 @@ func TestDeepScreenHintsStayOnTheLastRow(t *testing.T) {
 	assertFooterIsLastLine(t, view, 24, "esc назад")
 }
 
+func TestLogsHintsStayOnTheLastRow(t *testing.T) {
+	// Given: полноэкранные логи на терминале полной высоты.
+	m := Model{screen: screenLogs, snapshot: snapshotWithServers("web"), logs: newLogsScreen()}
+	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	for i := range 40 {
+		m.logs.buffer.Append("19:41:0" + string(rune('0'+i%10)) + " info строка")
+	}
+	m.logs.refresh()
+
+	// When: кадр отрисован.
+	view := m.View()
+
+	// Then: кадр ровно по высоте терминала, подсказки — на последней строке.
+	assertFooterIsLastLine(t, view, 24, "esc закрыть")
+}
+
 func TestOverlayKeepsHintsOnTheLastRow(t *testing.T) {
 	// Given Help open over Fleet on a full-height terminal.
 	m := Model{screen: screenFleet, snapshot: snapshotWithServers("web")}

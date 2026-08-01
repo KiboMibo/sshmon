@@ -153,6 +153,10 @@ type LogBuffer struct {
 	paused   bool
 	frozen   []string
 	filter   string
+	// version растёт на каждое изменение видимого содержимого. Экран логов
+	// спрашивает Visible() по нескольку раз за кадр, а буфер держит до 10 000
+	// строк: по версии он понимает, что пересчитывать нечего.
+	version uint64
 }
 
 func NewLogBuffer(maxLines int) *LogBuffer {
@@ -165,6 +169,7 @@ func NewLogBuffer(maxLines int) *LogBuffer {
 func (b *LogBuffer) Append(line string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.version++
 	b.lines = append(b.lines, line)
 	if len(b.lines)-b.start > b.maxLines {
 		b.start++
@@ -194,6 +199,7 @@ func (b *LogBuffer) window() []string {
 func (b *LogBuffer) Reset() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.version++
 	b.lines = nil
 	b.start = 0
 	b.frozen = nil
@@ -202,6 +208,7 @@ func (b *LogBuffer) Reset() {
 func (b *LogBuffer) SetPaused(paused bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.version++
 	if paused && !b.paused {
 		b.frozen = append([]string(nil), b.lines[b.start:]...)
 	}
@@ -213,8 +220,17 @@ func (b *LogBuffer) SetPaused(paused bool) {
 
 func (b *LogBuffer) SetFilter(filter string) {
 	b.mu.Lock()
+	b.version++
 	b.filter = strings.ToLower(filter)
 	b.mu.Unlock()
+}
+
+// Version — счётчик изменений видимого содержимого: строк, фильтра и паузы.
+// Одинаковое значение гарантирует, что Visible() вернёт то же самое.
+func (b *LogBuffer) Version() uint64 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.version
 }
 
 func (b *LogBuffer) Total() int {

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -351,6 +352,81 @@ func TestLogsMatchJumpAndCopyNotice(t *testing.T) {
 	}
 	if payload := osc52Copy("three"); payload != "\x1b]52;c;dGhyZWU=\a" {
 		t.Fatalf("osc52 payload = %q", payload)
+	}
+}
+
+// logsScreenWithLines — экран логов, где строк заведомо больше высоты окна.
+func logsScreenWithLines(t *testing.T, count int) Model {
+	t.Helper()
+	lines := make([]string, 0, count)
+	for i := range count {
+		lines = append(lines, fmt.Sprintf("line %02d", i))
+	}
+	return logsScreenModel(t, lines...)
+}
+
+func TestLogsHomeAndEndMoveToTheEdges(t *testing.T) {
+	// Given: экран логов с сорока строками в окне на шестнадцать.
+	m := logsScreenWithLines(t, 40)
+
+	// When: нажат home.
+	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyHome})
+
+	// Then: окно в начале буфера, и пришедшая строка его оттуда не уводит.
+	if m.logs.viewport.YOffset != 0 || !strings.Contains(m.View(), "line 00") {
+		t.Fatalf("home не увёл окно в начало: YOffset = %d\n%s", m.logs.viewport.YOffset, m.View())
+	}
+	m.logs.buffer.Append("line 40")
+	m.logs.refresh()
+	if m.logs.viewport.YOffset != 0 {
+		t.Fatalf("новая строка увела окно от начала: YOffset = %d", m.logs.viewport.YOffset)
+	}
+
+	// When: нажат end.
+	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEnd})
+
+	// Then: выделение снято, окно у хвоста.
+	if m.logs.cursor != -1 || m.logs.viewport.YOffset == 0 {
+		t.Fatalf("cursor=%d YOffset=%d", m.logs.cursor, m.logs.viewport.YOffset)
+	}
+	if !strings.Contains(m.View(), "line 40") {
+		t.Fatalf("после end хвост не виден:\n%s", m.View())
+	}
+}
+
+func TestLogsPageUpSurvivesIncomingLines(t *testing.T) {
+	// Given: экран логов, следящий за хвостом потока.
+	m := logsScreenWithLines(t, 40)
+
+	// When: страница пролистана вверх и приходит новая строка.
+	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyPgUp})
+	offset, cursor := m.logs.viewport.YOffset, m.logs.cursor
+	m.logs.buffer.Append("fresh line")
+	m.logs.refresh()
+
+	// Then: окно осталось там, куда его пролистали, — выделение его удерживает.
+	if cursor < 0 || offset == 0 {
+		t.Fatalf("pgup не сдвинул окно: cursor=%d offset=%d", cursor, offset)
+	}
+	if m.logs.viewport.YOffset != offset || m.logs.cursor != cursor {
+		t.Fatalf("страницу отмотало назад: YOffset=%d (было %d) cursor=%d", m.logs.viewport.YOffset, offset, m.logs.cursor)
+	}
+}
+
+func TestLogsDensitySpansMidnight(t *testing.T) {
+	// Given: строки, пришедшие до и после полуночи.
+	density := newLogDensity([]string{
+		"23:58:00 info вечерняя запись",
+		"23:59:30 warn почти полночь",
+		"00:01:00 info уже завтра",
+	}, 8)
+
+	// Then: диапазон — три минуты, а не почти сутки назад.
+	if density.span != "-3м — сейчас" {
+		t.Fatalf("span = %q", density.span)
+	}
+	if !strings.Contains(density.spike, "23:59") {
+		t.Fatalf("spike = %q", density.spike)
 	}
 }
 

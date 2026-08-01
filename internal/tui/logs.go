@@ -57,6 +57,18 @@ type logsScreen struct {
 	// notice — короткое подтверждение действия («строка скопирована»), живёт
 	// до следующего нажатия клавиши.
 	notice string
+	// visible — кэш отфильтрованных строк. За один кадр их спрашивают тело
+	// экрана, счётчик строк и полоса плотности, а буфер держит до 10 000 строк
+	// и пополняется на каждую строку живого потока.
+	visible    []string
+	visibleKey logsVisibleKey
+}
+
+// logsVisibleKey — всё, от чего зависит выборка visibleLines: содержимое буфера
+// вместе с его фильтром (версия буфера) и уровень экрана.
+type logsVisibleKey struct {
+	version uint64
+	level   logLevel
 }
 
 type logsOpenedMsg struct {
@@ -292,10 +304,23 @@ func (m *Model) handleLogsKey(key tea.KeyMsg) (tea.Cmd, bool) {
 	case "down", "j":
 		m.logs.moveCursor(1)
 		return nil, true
-	case "pgup", "pgdown", "home", "end":
-		var cmd tea.Cmd
-		m.logs.viewport, cmd = m.logs.viewport.Update(key)
-		return cmd, true
+	case "pgup", "pgdown":
+		// Страницу листает выделение, а не одно окно просмотра: при активном
+		// выделении refresh() возвращает окно к курсору, и на живом потоке
+		// пролистанная вверх страница отматывалась бы обратно первой же
+		// пришедшей строкой.
+		step := max(1, m.logs.viewport.Height)
+		if value == "pgup" {
+			step = -step
+		}
+		m.logs.pageCursor(step)
+		return nil, true
+	case "home":
+		m.logs.gotoTop()
+		return nil, true
+	case "end":
+		m.logs.gotoBottom()
+		return nil, true
 	}
 	return nil, false
 }
@@ -353,6 +378,31 @@ func logLineLevel(line string) logLevel {
 }
 
 func (l logsScreen) visibleLines() []string {
+	if l.currentVisibleKey() == l.visibleKey {
+		return l.visible
+	}
+	return l.filterLines()
+}
+
+// syncVisible обновляет кэш видимых строк. Зовётся из refresh(), то есть один
+// раз на входящую строку потока или нажатие клавиши, а не по разу на каждый
+// вызов visibleLines внутри кадра.
+func (l *logsScreen) syncVisible() {
+	l.visibleKey = l.currentVisibleKey()
+	l.visible = l.filterLines()
+}
+
+func (l logsScreen) currentVisibleKey() logsVisibleKey {
+	if l.buffer == nil {
+		return logsVisibleKey{}
+	}
+	return logsVisibleKey{version: l.buffer.Version(), level: l.level}
+}
+
+func (l logsScreen) filterLines() []string {
+	if l.buffer == nil {
+		return nil
+	}
 	lines := l.buffer.Visible()
 	if l.level == logLevelAll {
 		return lines
@@ -406,6 +456,40 @@ func (l *logsScreen) moveCursor(delta int) {
 		l.cursor = max(0, min(len(lines)-1, l.cursor+delta))
 	}
 	l.refresh()
+}
+
+// pageCursor двигает выделение на страницу. От moveCursor отличается первым
+// нажатием: с хвоста страница должна сразу уйти вверх, а не только выделить
+// последнюю строку.
+func (l *logsScreen) pageCursor(delta int) {
+	lines := l.bodyLines()
+	if len(lines) == 0 {
+		l.cursor = -1
+		return
+	}
+	if l.cursor < 0 {
+		l.cursor = len(lines) - 1
+	}
+	l.cursor = max(0, min(len(lines)-1, l.cursor+delta))
+	l.refresh()
+}
+
+// gotoTop выделяет первую строку, а не просто двигает окно: без выделения экран
+// следует за хвостом, и первая же пришедшая строка вернула бы окно вниз.
+func (l *logsScreen) gotoTop() {
+	if len(l.bodyLines()) == 0 {
+		l.cursor = -1
+		return
+	}
+	l.cursor = 0
+	l.refresh()
+}
+
+// gotoBottom снимает выделение: экран снова следует за хвостом потока.
+func (l *logsScreen) gotoBottom() {
+	l.cursor = -1
+	l.refresh()
+	l.viewport.GotoBottom()
 }
 
 // jumpMatch двигает выделение к следующему (delta=+1) или предыдущему (-1)
@@ -525,6 +609,7 @@ func (l *logsScreen) resize(width, height int) {
 }
 
 func (l *logsScreen) refresh() {
+	l.syncVisible()
 	if !l.ready {
 		return
 	}
@@ -547,13 +632,13 @@ func (l *logsScreen) refresh() {
 	l.viewport.SetContent(strings.Join(rendered, "\n"))
 	switch {
 	case l.cursor >= 0:
-		l.scrollToCursor()
+		l.scrollToCursor(len(lines))
 	case !l.paused:
 		l.viewport.GotoBottom()
 	}
 }
 
-func (l *logsScreen) scrollToCursor() {
+func (l *logsScreen) scrollToCursor(total int) {
 	height := max(1, l.viewport.Height)
 	offset := l.viewport.YOffset
 	if l.cursor < offset {
@@ -562,7 +647,9 @@ func (l *logsScreen) scrollToCursor() {
 	if l.cursor >= offset+height {
 		offset = l.cursor - height + 1
 	}
-	l.viewport.SetYOffset(offset)
+	// Присваивание поля, а не SetYOffset: YOffset — публичное поле viewport'а,
+	// поэтому кламп по обоим краям делаем сами.
+	l.viewport.YOffset = max(0, min(offset, max(0, total-height)))
 }
 
 // displayLine убирает колонку времени, когда она выключена клавишей «t»: на
@@ -613,6 +700,8 @@ func twoDigits(value string) (int, bool) {
 	return int(value[0]-'0')*10 + int(value[1]-'0'), true
 }
 
+const secondsPerDay = 24 * 3600
+
 // logDensity — распределение строк по времени для полосы плотности.
 type logDensity struct {
 	counts     []*float64
@@ -634,11 +723,20 @@ func newLogDensity(lines []string, buckets int) logDensity {
 	}
 	entries := make([]entry, 0, len(lines))
 	first, last := 0, 0
+	// Строки приходят по порядку, а время суток за полночь «идёт назад»: без
+	// добавления суток лог через полночь давал span ≈ 86 000 секунд и подпись
+	// «-23ч — сейчас» вместо нескольких минут.
+	day, previous := 0, -1
 	for _, line := range lines {
 		_, at, ok := logTimeAt(line)
 		if !ok {
 			continue
 		}
+		if previous >= 0 && at+day < previous {
+			day += secondsPerDay
+		}
+		at += day
+		previous = at
 		if len(entries) == 0 || at < first {
 			first = at
 		}
@@ -682,6 +780,8 @@ func newLogDensity(lines []string, buckets int) logDensity {
 		if buckets > 1 {
 			at = first + peak*span/(buckets-1)
 		}
+		// Обратно ко времени суток: у лога через полночь к отметке прибавлены сутки.
+		at %= secondsPerDay
 		density.spikeLevel = worst[peak]
 		density.spike = fmt.Sprintf("⚠ %02d:%02d всплеск %s", at/3600, at/60%60, logLevelNames[worst[peak]])
 	}
