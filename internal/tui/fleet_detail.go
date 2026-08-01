@@ -102,6 +102,25 @@ func processNameAndTail(command string) (string, string) {
 	return name, strings.TrimSpace(tail)
 }
 
+// scheduleFleetTopProcesses откладывает запрос `ps` до паузы в нажатиях: сам
+// запрос уйдёт из applyDebounce, если за inputDebounce курсор больше не двигали.
+// Всё, что видно на экране, делаем сразу — иначе сайдбар 200 мс показывал бы
+// процессы прежнего хоста под именем нового.
+func (m *Model) scheduleFleetTopProcesses() tea.Cmd {
+	m.ensureFleet()
+	if m.processes.cancel != nil {
+		m.processes.cancel()
+		m.processes.cancel = nil
+	}
+	if !m.fleetSidebarVisible() {
+		return nil
+	}
+	m.request++
+	m.processes.generation, m.processes.status = m.request, diagnosticsLoading
+	m.processes.items = nil
+	return debounceTick(debounceTopProcesses, m.processes.generation)
+}
+
 // startFleetTopProcesses запрашивает процессы выбранного хоста для сайдбара.
 // Механизм общий с экраном процессов — то же состояние и то же сообщение с
 // результатом, поэтому переход на экран процессов не начинает всё заново, а

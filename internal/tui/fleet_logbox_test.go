@@ -120,18 +120,17 @@ func TestFleetLogboxMovementSwitchesHostAndStream(t *testing.T) {
 		cmd()
 	}
 
-	// When: the selection moves down inside the drawer.
+	// When: the selection moves down inside the drawer and the debounce pause
+	// expires — поток перезапускается не на нажатие, а после паузы тишины.
 	moved, cmd := updateModel(t, opened, key("j"))
 	if cmd == nil {
 		t.Fatal("movement inside the drawer produced no command")
 	}
-	if batch, ok := cmd().(tea.BatchMsg); ok {
-		for _, inner := range batch {
-			if inner != nil {
-				inner()
-			}
-		}
+	moved, cmd = updateModel(t, moved, debounceMsg{kind: debounceLogs, generation: moved.logs.generation})
+	if cmd == nil {
+		t.Fatal("дебаунс не запустил поток")
 	}
+	cmd()
 
 	// Then: both the header and the stream follow the new host.
 	if moved.selected != 1 || !moved.fleet.logbox {

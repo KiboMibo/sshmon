@@ -76,7 +76,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logs.resize(m.layout.width, m.layout.height)
 		m.resizeOverlay(msg.Width, msg.Height)
 		if m.fleetSidebarVisible() != visible {
-			return m, m.startFleetTopProcesses()
+			return m, m.scheduleFleetTopProcesses()
 		}
 		return m, nil
 	case collectorEventMsg:
@@ -108,6 +108,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, scheduleDiagnostics(screenContainers, msg.generation)
 		}
 		return m, nil
+	case debounceMsg:
+		return m, m.applyDebounce(msg)
 	case diagnosticsTickMsg:
 		if msg.screen == m.screen && msg.generation == m.diagnosticsGeneration(msg.screen) {
 			return m, m.startDiagnostics()

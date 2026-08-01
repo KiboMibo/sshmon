@@ -60,14 +60,16 @@ func (m *Model) handleFleetLogboxKey(key tea.KeyMsg) (tea.Cmd, bool) {
 
 // moveFleetLogbox двигает выбор по списку хостов вместе с потоком логов:
 // заголовок ящика подписан выбранным хостом, поэтому оставлять стрим на
-// прежнем нельзя — строки не совпадали бы с заголовком.
+// прежнем нельзя — строки не совпадали бы с заголовком. Новый поток открывается
+// через дебаунс: пробежка по списку не должна оставлять за собой по SSH-каналу
+// на хост.
 func (m *Model) moveFleetLogbox(delta int) tea.Cmd {
 	previous := m.selected
 	cmd := m.moveFleetBy(delta)
 	if m.selected == previous {
 		return cmd
 	}
-	stream := m.startLogsStream()
+	stream := m.scheduleLogsStream()
 	m.markLogboxSeen()
 	return tea.Batch(cmd, stream)
 }

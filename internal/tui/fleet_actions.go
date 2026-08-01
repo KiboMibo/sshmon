@@ -39,7 +39,7 @@ func (m *Model) moveFleetBy(delta int) tea.Cmd {
 	if m.selectedName() == previous {
 		return nil
 	}
-	return m.startFleetTopProcesses()
+	return m.scheduleFleetTopProcesses()
 }
 
 // openFromFleet уходит с экрана флота на экран kind, попутно поднимая workspace

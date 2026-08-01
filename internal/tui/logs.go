@@ -180,6 +180,26 @@ func (m *Model) startLogsStream() tea.Cmd {
 	}
 }
 
+// scheduleLogsStream гасит текущий поток сразу, а новый открывает только после
+// паузы тишины: удержанная стрелка в ящике логов иначе открывала бы по SSH-каналу
+// на каждое движение курсора. Видимая часть работы — синхронная: строки прежнего
+// хоста под уже переписанным заголовком читались бы как его собственные.
+func (m *Model) scheduleLogsStream() tea.Cmd {
+	m.logs.ensure()
+	m.cancelLogsStream()
+	m.logs.buffer.Reset()
+	m.logs.cursor = -1
+	m.logs.contextLines = nil
+	m.logs.status = diagnosticsLoading
+	m.logs.err = nil
+	m.logs.refresh()
+	// Поколение растёт сразу: строка уже закрытого потока, успевшая уйти в
+	// очередь сообщений, не должна попасть в буфер нового хоста.
+	m.request = max(m.request, m.logs.generation) + 1
+	m.logs.generation = m.request
+	return debounceTick(debounceLogs, m.logs.generation)
+}
+
 func (m *Model) cancelLogsStream() {
 	if m.logs.cancel != nil {
 		m.logs.cancel()
