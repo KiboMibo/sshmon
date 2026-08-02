@@ -39,7 +39,7 @@ sshmon --headless                # фон: сбор метрик + MCP-серв�
 
 Скрипт ставит бинарник в `/usr/local/bin` (sudo только при необходимости) и
 сверяет SHA-256, если в релизе есть `checksums.txt`. Своя папка —
-`... | BINDIR="$HOME/.local/bin" sh`; конкретная версия — `... | VERSION=v0.5.0 sh`.
+`... | BINDIR="$HOME/.local/bin" sh`; конкретная версия — `... | VERSION=v0.5.2 sh`.
 Сборка из исходников — в разделе [Установка](#установка).
 
 Конфиг сохраняется в `~/.config/sshmon/config.yaml`. Если `~/.ssh/config` пуст —
@@ -62,7 +62,7 @@ curl -fsSL https://raw.githubusercontent.com/KiboMibo/sshmon/main/install.sh | s
 релизе опубликован `checksums.txt` — проверяет SHA-256. Переменные окружения:
 
 - `BINDIR` — папка установки, например `$HOME/.local/bin` (без sudo);
-- `VERSION` — конкретная версия, например `v0.5.0`.
+- `VERSION` — конкретная версия, например `v0.5.2`.
 
 Хотите сперва прочитать скрипт — скачайте и запустите локально:
 

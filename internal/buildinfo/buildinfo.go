@@ -3,4 +3,4 @@
 package buildinfo
 
 // Version — версия релиза sshmon.
-const Version = "0.5.0"
+const Version = "0.5.2"
