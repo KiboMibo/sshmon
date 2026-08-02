@@ -97,5 +97,7 @@ func sshArgs(server config.Server) []string {
 	if server.User != "" {
 		target = server.User + "@" + server.Host
 	}
-	return append(args, target)
+	// «--» закрывает список опций: конфиг проверяется при чтении, но адрес,
+	// начинающийся с «-», не должен превращаться в опцию ssh даже здесь.
+	return append(args, "--", target)
 }

@@ -61,6 +61,9 @@ func WriteDefault(path string) error {
 
 // WriteWithServers создаёт конфиг с выбранными серверами.
 func WriteWithServers(path string, servers []Server) error {
+	if err := checkHosts(servers); err != nil {
+		return err
+	}
 	sb, err := yaml.Marshal(map[string][]Server{"servers": servers})
 	if err != nil {
 		return err
@@ -86,6 +89,9 @@ func PopulateServers(path string, servers []Server) error {
 	if len(servers) == 0 {
 		return ErrNoServers
 	}
+	if err := checkHosts(servers); err != nil {
+		return err
+	}
 	c.Servers = servers
 	body, err := yaml.Marshal(&c)
 	if err != nil {
@@ -104,6 +110,9 @@ func AddServers(path string, servers []Server) (int, error) {
 	var c Config
 	if err := yaml.Unmarshal(b, &c); err != nil {
 		return 0, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := checkHosts(servers); err != nil {
+		return 0, err
 	}
 	taken := map[string]bool{}
 	for _, s := range c.Servers {
