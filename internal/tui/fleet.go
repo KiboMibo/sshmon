@@ -272,10 +272,20 @@ func (m Model) fleetInsetLines(server collect.Metrics, width, height int) []stri
 }
 
 const (
-	fleetStateWidth  = 13 // «⚠ память 98%» — самая длинная формулировка колонки СОСТ
-	fleetNameMin     = 12
-	fleetNameMax     = 24
-	fleetGapWidth    = 2
+	// fleetStateWidth — нижняя граница колонки СОСТ: «⚠ память 98%», самая
+	// длинная формулировка макета. На широкой панели колонка тянется до
+	// fleetStateMax — «⚠ » плюс 34 ячейки, ровно под типовую фразу детектора
+	// «диск /shares/video заполнен на 92%». Выше нет смысла: формулировки
+	// длиннее приходят только от stderr сорванного ssh, а треть панели под одну
+	// колонку увела бы числа к правому краю в одиночестве.
+	fleetStateWidth = 13
+	fleetStateMax   = 36
+	fleetNameMin    = 12
+	fleetNameMax    = 24
+	fleetGapWidth   = 2
+	// fleetGapComfort — зазор между числовыми колонками, который раздача ширины
+	// обеспечивает раньше, чем начинает удлинять СОСТ.
+	fleetGapComfort  = 6
 	fleetDockerWidth = 11   // «●12 ○3 ⚠1» — самый широкий вид ячейки контейнеров
 	fleetMarker      = "▍ " // маркер выделенной строки, ширина учтена в fixed()
 )
@@ -332,22 +342,30 @@ func fleetColumnLayout(width int, detailed bool) fleetColumns {
 		cols.uptime = false
 	}
 	cols.name = fleetNameMin + max(0, min(fleetNameMax-fleetNameMin, width-cols.fixed()))
+	slack := max(0, width-cols.fixed()-(cols.name-fleetNameMin))
+	gaps := len(cols.numericWidths())
+	// Порядок раздачи: сначала числа получают зазор в fleetGapComfort ячеек, и
+	// только остаток сверх него удлиняет колонку состояния. Отдай мы СОСТ
+	// приоритет, на 80 колонках весь запас ушёл бы в неё и числа снова слиплись
+	// бы у правого края — ровно то, на что жаловался пользователь.
+	cols.state += min(fleetStateMax-fleetStateWidth, max(0, slack-gaps*(fleetGapComfort-fleetGapWidth)))
 	// Имя хоста длиннее fleetNameMax не читается лучше, поэтому весь остаток
 	// ширины уходит в зазоры блока чисел — поровну, чтобы интервалы между
 	// колонками росли вместе с панелью, а не только отступ перед ними. Остаток
 	// от деления достаётся lead: так последняя колонка остаётся у правого края
 	// панели, вплотную к краю заголовка.
-	extra := max(0, width-cols.fixed()-(cols.name-fleetNameMin))
-	gaps := len(cols.numericWidths())
+	extra := slack - (cols.state - fleetStateWidth)
 	cols.lead += extra/gaps + extra%gaps
 	cols.inner += extra / gaps
 	return cols
 }
 
-// fixed — ширина строки при минимальном имени хоста и базовых зазорах: по ней
-// решается, какие колонки ещё помещаются и сколько места остаётся имени.
+// fixed — ширина строки при минимальных имени и состоянии и базовых зазорах:
+// по ней решается, какие колонки ещё помещаются и сколько места остаётся имени
+// и состоянию. Считает по константам, а не по c.state: после раздачи ширины
+// поле уже выросло, и повторный вызов дал бы другой ответ.
 func (c fleetColumns) fixed() int {
-	total := fleetNameMin + c.state
+	total := fleetNameMin + fleetStateWidth
 	widths := c.numericWidths()
 	for _, w := range widths {
 		total += w

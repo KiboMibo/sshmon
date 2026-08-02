@@ -246,6 +246,48 @@ func TestFleetNumericGapsGrowWithPanelWidth(t *testing.T) {
 	}
 }
 
+// TestFleetStateColumnGrowsOnWidePanels — Дано: хост с длинной формулировкой
+// проблемы; Когда: кадр отрисован на широком терминале; Тогда: состояние видно
+// целиком, а не «⚠ диск /shar…», при этом на 60–80 колонках колонка держит
+// прежние 13 ячеек и числа не слипаются.
+func TestFleetStateColumnGrowsOnWidePanels(t *testing.T) {
+	const msg = "диск /shares/video заполнен на 92%"
+	snapshot := collect.Snapshot{
+		Time:    time.Now(),
+		Servers: []collect.Metrics{{Name: "kava", Group: "main", Online: true, Time: time.Now()}},
+		Issues:  []collect.Issue{{Server: "kava", Severity: "warn", Msg: msg}},
+	}
+	for _, expanded := range []bool{false, true} {
+		t.Run(fmt.Sprintf("expanded=%v", expanded), func(t *testing.T) {
+			m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(200, 30)}
+			m.fleet.expanded = expanded
+			view := stripANSI(m.View())
+			// Правую колонку отрезаем: сайдбар печатает ту же формулировку, и
+			// без этого тест прошёл бы даже с обрезанной ячейкой списка.
+			list, _, _ := strings.Cut(fleetRowOf(t, view, "kava"), "│  │")
+			if !strings.Contains(list, msg) {
+				t.Fatalf("состояние обрезано на 200 колонках: %q", list)
+			}
+			for _, line := range strings.Split(view, "\n") {
+				if lipgloss.Width(line) > 200 {
+					t.Fatalf("строка кадра в %d ячеек при ширине 200: %q", lipgloss.Width(line), line)
+				}
+			}
+		})
+	}
+	// И: на узкой панели раздача ширины прежняя — СОСТ не растёт, зазор между
+	// числами остаётся больше базового.
+	for _, width := range []int{60, 80} {
+		cols := fleetColumnLayout(width, false)
+		if cols.state != fleetStateWidth {
+			t.Fatalf("колонка СОСТ выросла на %d колонках: %+v", width, cols)
+		}
+		if width == 80 && cols.inner <= fleetGapWidth {
+			t.Fatalf("числа слиплись на 80 колонках: %+v", cols)
+		}
+	}
+}
+
 // TestFleetDiskColumnPrefersRootPartition — Дано: хосты с разным набором
 // разделов; Тогда: в колонке DISK стоит «/», если он собран, иначе самый
 // заполненный раздел, а у offline-хоста — прочерк.
