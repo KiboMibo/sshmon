@@ -108,9 +108,9 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.fleet.expanded = false
-			// Детали свернулись — на их место вернулся сайдбар, и его раздел
-			// «ТОП ПО ПАМЯТИ» пуст, пока курсор стоит на месте.
-			return m, m.scheduleFleetTopProcesses()
+			// Перезапрашивать «ТОП ПО ПАМЯТИ» больше незачем: сайдбар виден и в
+			// раскрытом виде, его данные никуда не девались.
+			return m, nil
 		}
 	case "g", "tab":
 		if m.screen == screenFleet {

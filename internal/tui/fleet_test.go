@@ -93,7 +93,7 @@ func TestFleetRowShowsServerUptimeInsteadOfDataAge(t *testing.T) {
 	}
 }
 
-func TestFleetExpandedReplacesSidebarWithDetails(t *testing.T) {
+func TestFleetExpandedKeepsSidebarBesideTheCard(t *testing.T) {
 	// Given a wide fleet with the sidebar enabled.
 	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{{
 		Name: "kava", Group: "main", Online: true, Time: time.Now(), Hostname: "10.2.4.18",
@@ -107,14 +107,22 @@ func TestFleetExpandedReplacesSidebarWithDetails(t *testing.T) {
 	// When the row is expanded with the right arrow.
 	m, _ = updateModel(t, m, key("right"))
 	view := m.View()
-	// Then the sidebar gives its place to the card under the row.
-	for _, unwanted := range []string{"ЧТО НЕ ТАК", "ТОП ПО ПАМЯТИ", "ДЕЙСТВИЯ"} {
-		if strings.Contains(view, unwanted) {
-			t.Fatalf("sidebar section %q survived expansion:\n%s", unwanted, view)
+	// Then the sidebar stays: контекст «что не так» нужен именно в этот момент
+	// (осознанное расхождение с макетом 3b).
+	for _, want := range []string{"ЧТО НЕ ТАК", "ТОП ПО ПАМЯТИ", "ДЕЙСТВИЯ"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("sidebar section %q lost on expansion:\n%s", want, view)
 		}
 	}
 	if !strings.Contains(view, "ядер") || !strings.Contains(view, "10.2.4.18") {
 		t.Fatalf("expanded card missing:\n%s", view)
+	}
+	// And each frame line still fits the terminal: карточка ужимается, а не
+	// вылезает за правую рамку сайдбара.
+	for _, line := range strings.Split(view, "\n") {
+		if lipgloss.Width(line) > 140 {
+			t.Fatalf("строка кадра в %d ячеек при ширине 140: %q", lipgloss.Width(line), line)
+		}
 	}
 }
 

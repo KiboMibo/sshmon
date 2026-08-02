@@ -11,7 +11,10 @@ func (m Model) fleetCardLines(server collect.Metrics, width int) []string {
 	inner := max(20, width-4)
 	content := []string{fleetCardSummary(server)}
 	content = append(content, m.fleetCardBody(server, inner)...)
-	content = append(content, dimStyle.Render("[l] логи  [p] процессы  [o] порты  [d] контейнеры  [x] ssh  [←] свернуть"))
+	// fitLine и здесь: рядом с карточкой теперь остаётся сайдбар, левая колонка
+	// уже, и полный список подсказок в неё не влезает — его надо ужать, а не
+	// дать рамке съесть хвост.
+	content = append(content, dimStyle.Render(fitLine("[l] логи  [p] процессы  [o] порты  [d] контейнеры  [x] ssh  [←] свернуть", inner)))
 	return panelBoxStyled("", "", width, content, dimStyle)
 }
 

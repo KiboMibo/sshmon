@@ -201,10 +201,12 @@ func (m Model) fleetFooter() string {
 // рамка панели забирает из них две, остальное достаётся содержимому.
 func (m Model) renderFleetColumns(budget int) string {
 	contentH := max(1, budget-panelOverhead)
-	// Раскрытая карточка и есть детали выбранного хоста, поэтому в этом режиме
-	// сайдбар уступает ей место (макет 3b): иначе те же детали рисуются дважды,
-	// а карточка ужимается в узкую левую колонку.
-	if m.fleet.expanded || !m.fleet.preview {
+	// Осознанное расхождение с макетом 3b: там сайдбар уступает место раскрытой
+	// карточке. На живом парке это оказалось хуже — «что не так» и «топ по
+	// памяти» пропадали ровно в тот момент, когда с хостом разбираются. Сайдбар
+	// остаётся при раскрытии; карточка ужимается вместе с левой колонкой.
+	// Не возвращать обратно к условию `m.fleet.expanded || !m.fleet.preview`.
+	if !m.fleet.preview {
 		listLines, selectedRow, span := m.fleetListLines(m.layout.width-4, contentH-1)
 		scroll := fleetScroll(selectedRow, span, contentH, len(listLines))
 		full := panelBoxStyled("СЕРВЕРЫ", "", m.layout.width,
