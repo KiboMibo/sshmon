@@ -88,6 +88,74 @@ func TestParsePortsPreservesProcessAndPID(t *testing.T) {
 	}
 }
 
+// TestParsePortsNormalizesIPv6Addresses — Дано: вывод `ss` (debian) и
+// `netstat` (centos 7) с одними и теми же IPv6-слушателями; Когда: порты
+// разобраны; Тогда: адрес записан в одной форме `[::]:41641` независимо от
+// утилиты, а IPv4 и имя процесса не тронуты.
+func TestParsePortsNormalizesIPv6Addresses(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		raw  string
+		want []Port
+	}{
+		{
+			name: "ss",
+			raw: "tcp   LISTEN 0 4096          [::]:41641          [::]:*    users:((\"tailscaled\",pid=812,fd=26))\n" +
+				"udp   UNCONN 0 0            [::1]:323            [::]:*    users:((\"chronyd\",pid=987,fd=7))\n" +
+				"tcp   LISTEN 0 128        0.0.0.0:22          0.0.0.0:*    users:((\"sshd\",pid=123,fd=3))\n",
+			want: []Port{
+				{Proto: "tcp", Local: "[::]:41641", Process: "tailscaled", PID: 812},
+				{Proto: "udp", Local: "[::1]:323", Process: "chronyd", PID: 987},
+				{Proto: "tcp", Local: "0.0.0.0:22", Process: "sshd", PID: 123},
+			},
+		},
+		{
+			name: "netstat",
+			raw: "tcp6       0      0 :::41641                :::*                    LISTEN      812/tailscaled\n" +
+				"udp6       0      0 ::1:323                 :::*                                987/chronyd\n" +
+				"tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN      123/sshd\n",
+			want: []Port{
+				{Proto: "tcp6", Local: "[::]:41641", Process: "tailscaled", PID: 812},
+				{Proto: "udp6", Local: "[::1]:323", Process: "chronyd", PID: 987},
+				{Proto: "tcp", Local: "0.0.0.0:22", Process: "sshd", PID: 123},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParsePorts(tt.raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %#v, want %#v", got, tt.want)
+			}
+			for index := range tt.want {
+				if got[index] != tt.want[index] {
+					t.Fatalf("порт %d: got %#v, want %#v", index, got[index], tt.want[index])
+				}
+			}
+		})
+	}
+}
+
+// TestNormalizeListenAddressLeavesForeignFormsAlone — Дано: адреса, которые
+// не являются IPv6 «хост:порт»; Когда: они нормализуются; Тогда: остаются как
+// есть — скобки не должны появляться там, где их некуда поставить.
+func TestNormalizeListenAddressLeavesForeignFormsAlone(t *testing.T) {
+	t.Parallel()
+	for _, address := range []string{"0.0.0.0:22", "127.0.0.1:323", "*:*", "[::]:41641", "[::1]:323", "::", "/run/systemd/journal/stdout"} {
+		if got := normalizeListenAddress(address); got != address {
+			t.Fatalf("адрес %q превратился в %q", address, got)
+		}
+	}
+	// И: смешанный адрес IPv4-в-IPv6 тоже получает скобки — он IPv6.
+	if got := normalizeListenAddress("::ffff:10.2.4.18:22"); got != "[::ffff:10.2.4.18]:22" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 // TestParseContainersReportsDockerFailure — Дано: вывод `docker ps`, где
 // вместо списка пришла причина отказа (stderr слит со stdout); Когда: он
 // разобран; Тогда: причина доходит до вызывающего, а «нет прав» отличима от

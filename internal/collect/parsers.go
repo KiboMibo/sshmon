@@ -156,9 +156,29 @@ func ParsePorts(raw string) ([]Port, error) {
 				port.Process = match[2]
 			}
 		}
+		port.Local = normalizeListenAddress(port.Local)
 		out = append(out, port)
 	}
 	return out, nil
+}
+
+// normalizeListenAddress приводит IPv6-адрес к единой форме `[::]:41641`.
+// Формат зависит от утилиты: debian/`ss` печатает адрес в скобках, centos
+// 7/`netstat` — как `:::10050` и `::1:323`. В одном списке это читается как
+// разные вещи, хотя это один и тот же адрес. Нормализуем на разборе, а не на
+// отрисовке: тот же список уходит наружу через MCP-сервер.
+func normalizeListenAddress(address string) string {
+	if strings.HasPrefix(address, "[") || strings.Count(address, ":") < 2 {
+		return address
+	}
+	index := strings.LastIndexByte(address, ':')
+	host, port := address[:index], address[index+1:]
+	// Без порта («::») и без второго двоеточия в хосте это не «адрес:порт»,
+	// а что-то другое — такое лучше показать как есть, чем испортить скобками.
+	if port == "" || !strings.Contains(host, ":") {
+		return address
+	}
+	return "[" + host + "]:" + port
 }
 
 func parsePercent(value string) float64 {
