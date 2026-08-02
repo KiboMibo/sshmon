@@ -88,6 +88,28 @@ func TestParsePortsPreservesProcessAndPID(t *testing.T) {
 	}
 }
 
+// TestParseContainersReportsDockerFailure — Дано: вывод `docker ps`, где
+// вместо списка пришла причина отказа (stderr слит со stdout); Когда: он
+// разобран; Тогда: причина доходит до вызывающего, а «нет прав» отличима от
+// прочих ошибок.
+func TestParseContainersReportsDockerFailure(t *testing.T) {
+	t.Parallel()
+	denied := "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock"
+	_, err := ParseContainers(denied+"\n", "")
+	if !errors.Is(err, ErrAccessDenied) {
+		t.Fatalf("got %v, want ErrAccessDenied", err)
+	}
+	_, err = ParseContainers("Cannot connect to the Docker daemon at unix:///var/run/docker.sock.\n", "")
+	if err == nil || errors.Is(err, ErrAccessDenied) {
+		t.Fatalf("got %v, want обычную ошибку с текстом", err)
+	}
+	// И: пустой вывод — это просто «контейнеров нет», а не отказ.
+	got, err := ParseContainers("\n", "")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("got %#v, err %v", got, err)
+	}
+}
+
 func TestDiagnosticsParsersReturnUnsupportedMarker(t *testing.T) {
 	t.Parallel()
 	// Given the marker emitted when a remote command is unavailable.

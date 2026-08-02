@@ -2,12 +2,19 @@ package collect
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
 var ErrUnsupported = errors.New("операция не поддерживается сервером")
+
+// ErrAccessDenied — утилита на хосте есть и отработала, но текущему
+// пользователю не хватает прав (типичный случай — docker без группы docker).
+// Отдельная ошибка, потому что для человека это не поломка сервера, а
+// недостающее право, и на экране это разные формулировки.
+var ErrAccessDenied = errors.New("нет доступа")
 
 const unsupportedMarker = "__SSHMON_UNSUPPORTED__"
 
@@ -98,7 +105,29 @@ func ParseContainers(listRaw, statsRaw string) ([]Container, error) {
 		}
 		out = append(out, container)
 	}
+	if len(out) == 0 {
+		return nil, dockerFailure(listRaw)
+	}
 	return out, nil
+}
+
+// dockerFailure объясняет пустой список контейнеров. Причину отказа docker
+// пишет в stderr, а он в dockerListCommand слит со stdout, поэтому непустой
+// вывод без единой разобранной строки — это и есть отказ. Его текст важнее
+// «Process exited with status 1» от ssh: без группы docker плитка иначе
+// молчала бы ровно так же, как на хосте без контейнеров.
+func dockerFailure(listRaw string) error {
+	for _, line := range strings.Split(listRaw, "\n") {
+		line = strings.TrimSpace(SanitizeLine(line))
+		if line == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(line), "permission denied") {
+			return fmt.Errorf("%w: %s", ErrAccessDenied, line)
+		}
+		return errors.New(line)
+	}
+	return nil
 }
 
 func ParsePorts(raw string) ([]Port, error) {

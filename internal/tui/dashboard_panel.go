@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -179,8 +180,8 @@ func unitStateText(active, sub string) string {
 // аптайм · память. Проценты CPU/MEM ушли: рядом стоит сетка метрик хоста,
 // и вторая процентная шкала в той же ширине только спорит с ней.
 func (m Model) dashboardDockerContent(width int) []string {
-	if !m.dashboardHasDocker() {
-		return []string{criticalStyle.Render("DOCKER NOT RUNNING")}
+	if len(m.dashboard.containers.items) == 0 {
+		return []string{dimStyle.Render(dockerStateText(m.dashboard.containers))}
 	}
 	const statusWidth, uptimeWidth, memoryWidth = 14, 5, 6
 	nameWidth := max(8, min(24, width-statusWidth-uptimeWidth-memoryWidth-5))
@@ -195,6 +196,26 @@ func (m Model) dashboardDockerContent(width int) []string {
 			padLeft(memory, memoryWidth))
 	}
 	return rows
+}
+
+// dockerStateText объясняет пустой список контейнеров. Плитка DOCKER стоит на
+// экране всегда: исчезнувшая плитка читается как «docker'а на хосте нет», а на
+// деле это чаще всего нехватка прав. Формулировка одна на два экрана — тот же
+// текст берёт карточка флота, иначе про один и тот же хост экраны говорят
+// разное.
+func dockerStateText(state dashboardContainersState) string {
+	switch {
+	case state.status == diagnosticsLoading || state.status == diagnosticsIdle:
+		return "загрузка…"
+	case errors.Is(state.err, collect.ErrUnsupported):
+		return "docker не установлен"
+	case errors.Is(state.err, collect.ErrAccessDenied):
+		return "нет доступа к docker"
+	case state.err != nil:
+		return "ошибка: " + errText(state.err)
+	default:
+		return "контейнеров нет"
+	}
 }
 
 // padLeft выравнивает значение по правому краю колонки шириной width,

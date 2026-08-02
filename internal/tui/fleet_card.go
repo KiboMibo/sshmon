@@ -51,7 +51,7 @@ func (m Model) fleetCardBody(server collect.Metrics, width int) []string {
 		lines = append(lines, fmt.Sprintf("%-7s %s", "net", net))
 	}
 	lines = append(lines, fmt.Sprintf("%-7s %s", "srv", m.servicesText()))
-	lines = append(lines, fmt.Sprintf("%-7s %s", "docker", dockerText(server.Docker)))
+	lines = append(lines, fmt.Sprintf("%-7s %s", "docker", m.dockerText(server)))
 	lines = append(lines, fmt.Sprintf("%-7s %s", "порты", portsTail(server.Ports)))
 	for i, line := range lines {
 		lines[i] = fitLine(line, width)
@@ -112,9 +112,10 @@ func netTail(rates []collect.NetRate) string {
 	return "rx " + byteValue(rx) + "/s  tx " + byteValue(tx) + "/s"
 }
 
-func dockerText(d collect.DockerCounts) string {
+func (m Model) dockerText(server collect.Metrics) string {
+	d := server.Docker
 	if d.Total() == 0 {
-		return dimStyle.Render("контейнеров нет")
+		return dimStyle.Render(m.dockerEmptyText(server.Name))
 	}
 	parts := []string{goodStyle.Render(fmt.Sprintf("● %d запущено", d.Running))}
 	if d.Stopped > 0 {
@@ -124,6 +125,18 @@ func dockerText(d collect.DockerCounts) string {
 		parts = append(parts, warnStyle.Render(fmt.Sprintf("⚠ %d проблемных", d.Broken)))
 	}
 	return strings.Join(parts, "  ")
+}
+
+// dockerEmptyText — почему в карточке не видно ни одного контейнера. Счётчики
+// сэмпла причину не знают: `docker ps` в общей команде глушит stderr, и «нет
+// прав» там неотличимо от «контейнеров нет». Причину знает диагностика экрана
+// сервера — берём её текст, если она про этот же хост, иначе два экрана про
+// один хост рассказывают разное.
+func (m Model) dockerEmptyText(server string) string {
+	if m.dashboard.server != server || m.dashboard.containers.status == diagnosticsIdle {
+		return "контейнеров нет"
+	}
+	return dockerStateText(m.dashboard.containers)
 }
 
 func portsTail(ports []collect.Port) string {

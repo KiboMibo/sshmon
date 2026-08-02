@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -203,6 +205,116 @@ func TestDockerContentShowsStateUptimeAndMemory(t *testing.T) {
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("docker content still shows %q:\n%s", forbidden, joined)
 		}
+	}
+}
+
+// TestDockerTileExplainsWhyListIsEmpty — Дано: состояния запроса контейнеров,
+// в которых списка нет; Когда: рисуется содержимое плитки DOCKER; Тогда: она
+// называет причину, а не молчит и не исчезает.
+func TestDockerTileExplainsWhyListIsEmpty(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		state dashboardContainersState
+		want  string
+	}{
+		{name: "idle", state: dashboardContainersState{}, want: "загрузка…"},
+		{name: "loading", state: dashboardContainersState{status: diagnosticsLoading}, want: "загрузка…"},
+		{name: "ready", state: dashboardContainersState{status: diagnosticsReady}, want: "контейнеров нет"},
+		{
+			name:  "unsupported",
+			state: dashboardContainersState{status: diagnosticsUnsupported, err: collect.ErrUnsupported},
+			want:  "docker не установлен",
+		},
+		{
+			name:  "denied",
+			state: dashboardContainersState{status: diagnosticsError, err: fmt.Errorf("%w: permission denied", collect.ErrAccessDenied)},
+			want:  "нет доступа к docker",
+		},
+		{
+			name:  "error",
+			state: dashboardContainersState{status: diagnosticsError, err: errors.New("dial timeout")},
+			want:  "ошибка: dial timeout",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := dashboardWorkspaceFixture()
+			m.dashboard.containers = tc.state
+
+			rows := m.dashboardDockerContent(45)
+
+			if len(rows) != 1 || !strings.Contains(rows[0], tc.want) {
+				t.Fatalf("содержимое плитки %#v, ожидалось %q", rows, tc.want)
+			}
+		})
+	}
+}
+
+// TestServerScreenKeepsDockerTileWithoutContainers — Дано: хост, на котором
+// `docker ps` отказал по правам; Когда: экран сервера собран на всех
+// поддерживаемых размерах; Тогда: блок DOCKER на месте, кадр не разъехался, а
+// причина видна везде, где плитка вообще рисуется рамкой.
+func TestServerScreenKeepsDockerTileWithoutContainers(t *testing.T) {
+	t.Parallel()
+	for _, size := range []struct{ width, height int }{
+		{width: 60, height: 16}, {width: 80, height: 24}, {width: 100, height: 16},
+		{width: 100, height: 20}, {width: 120, height: 30}, {width: 160, height: 50},
+	} {
+		m := serverScreenModel(size.width, size.height)
+		m.dashboard.containers = dashboardContainersState{
+			status: diagnosticsError,
+			err:    fmt.Errorf("%w: permission denied while trying to connect to the Docker daemon socket", collect.ErrAccessDenied),
+		}
+
+		view := m.View()
+		lines := strings.Split(view, "\n")
+
+		if len(lines) != size.height {
+			t.Fatalf("%dx%d: %d строк, ожидалось %d:\n%s", size.width, size.height, len(lines), size.height, view)
+		}
+		for index, line := range lines {
+			if got := lipgloss.Width(line); got > size.width {
+				t.Fatalf("%dx%d: строка %d шириной %d:\n%q", size.width, size.height, index, got, line)
+			}
+		}
+		for _, want := range []string{"DOCKER", "СЕРВИСЫ", "ЛОГИ"} {
+			if !strings.Contains(view, want) {
+				t.Fatalf("%dx%d: экран без блока %q:\n%s", size.width, size.height, want, view)
+			}
+		}
+		// Тогда: в рамочной раскладке видно и причину; в аварийной (60×16)
+		// от плитки остаётся один заголовок, и объяснению места уже нет.
+		if strings.Contains(view, "╭─ DOCKER") && !strings.Contains(view, "нет доступа к docker") {
+			t.Fatalf("%dx%d: плитка DOCKER не объяснила состояние:\n%s", size.width, size.height, view)
+		}
+	}
+}
+
+// TestFleetCardAndDockerTileAgreeOnAccessDenied — Дано: тот же отказ по правам
+// и карточка флота того же хоста; Когда: обе поверхности отрисованы; Тогда:
+// они называют состояние одинаково, а не «контейнеров нет» против «нет доступа».
+func TestFleetCardAndDockerTileAgreeOnAccessDenied(t *testing.T) {
+	t.Parallel()
+	m := dashboardWorkspaceFixture()
+	m.dashboard.server = m.snapshot.Servers[0].Name
+	m.dashboard.containers = dashboardContainersState{
+		status: diagnosticsError,
+		err:    fmt.Errorf("%w: permission denied", collect.ErrAccessDenied),
+	}
+
+	card := strings.Join(m.fleetCardLines(m.snapshot.Servers[0], 80), "\n")
+	tile := strings.Join(m.dashboardDockerContent(45), "\n")
+
+	if !strings.Contains(card, "нет доступа к docker") {
+		t.Fatalf("карточка флота молчит о причине:\n%s", card)
+	}
+	if !strings.Contains(tile, "нет доступа к docker") {
+		t.Fatalf("плитка молчит о причине:\n%s", tile)
+	}
+	// И: про чужой хост диагностика ничего не говорит — там остаются счётчики.
+	m.dashboard.server = "other"
+	if other := strings.Join(m.fleetCardLines(m.snapshot.Servers[0], 80), "\n"); !strings.Contains(other, "контейнеров нет") {
+		t.Fatalf("состояние чужого хоста утекло в карточку:\n%s", other)
 	}
 }
 

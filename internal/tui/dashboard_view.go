@@ -15,8 +15,3 @@ func (m Model) renderDashboardWorkspace() string {
 func (m Model) tilePanel(tile uint8, title, hint string, width int, content []string) []string {
 	return panelBoxStyled(title, hint, width, content, m.tileBorderStyle(tile))
 }
-
-func (m Model) dashboardHasDocker() bool {
-	c := m.dashboard.containers
-	return len(c.items) > 0 && c.status != diagnosticsUnsupported && c.status != diagnosticsError
-}

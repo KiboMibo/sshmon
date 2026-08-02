@@ -8,9 +8,13 @@ import (
 )
 
 const (
-	processesCommand   = "command -v ps >/dev/null 2>&1 || { echo " + unsupportedMarker + "; exit 0; }; ps -eo pid=,pcpu=,pmem=,args= 2>/dev/null || ps"
-	portsCommand       = "if command -v ss >/dev/null 2>&1; then ss -tulpn 2>/dev/null; elif command -v netstat >/dev/null 2>&1; then netstat -tulpn 2>/dev/null; else echo " + unsupportedMarker + "; fi"
-	dockerListCommand  = "command -v docker >/dev/null 2>&1 || { echo " + unsupportedMarker + "; exit 0; }; docker ps --format '{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}\\t{{.RunningFor}}'"
+	processesCommand = "command -v ps >/dev/null 2>&1 || { echo " + unsupportedMarker + "; exit 0; }; ps -eo pid=,pcpu=,pmem=,args= 2>/dev/null || ps"
+	portsCommand     = "if command -v ss >/dev/null 2>&1; then ss -tulpn 2>/dev/null; elif command -v netstat >/dev/null 2>&1; then netstat -tulpn 2>/dev/null; else echo " + unsupportedMarker + "; fi"
+	// stderr слит со stdout намеренно: причину отказа («permission denied»,
+	// «Cannot connect to the Docker daemon») docker пишет только туда, а
+	// ssh-сессия stderr не забирает — без слияния до экрана доезжает лишь
+	// «Process exited with status 1». Разбор отличает такой вывод от списка.
+	dockerListCommand  = "command -v docker >/dev/null 2>&1 || { echo " + unsupportedMarker + "; exit 0; }; docker ps --format '{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}\\t{{.RunningFor}}' 2>&1"
 	dockerStatsCommand = "command -v docker >/dev/null 2>&1 || { echo " + unsupportedMarker + "; exit 0; }; docker stats --no-stream --format '{{.ID}}\\t{{.CPUPerc}}\\t{{.MemPerc}}\\t{{.MemUsage}}'"
 )
 

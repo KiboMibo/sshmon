@@ -81,21 +81,14 @@ func (m Model) serverBody(server collect.Metrics, width, budget int) ([]string, 
 // serverBodyColumns — DOCKER слева, СЕРВИСЫ и ПОРТЫ справа, логи под ними.
 // Колонки ряда равной высоты, поэтому высота ПОРТОВ вычитается из СЕРВИСОВ.
 func (m Model) serverBodyColumns(server collect.Metrics, width, budget int, units []string) ([]string, bool) {
-	docker := m.dashboardHasDocker()
-	dockerWidth, rightWidth := 0, width
-	if docker {
-		dockerWidth = (width - 2) / 2
-		rightWidth = width - 2 - dockerWidth
-	}
+	dockerWidth := (width - 2) / 2
+	rightWidth := width - 2 - dockerWidth
 	dockerRows := m.dashboardDockerContent(dockerWidth - 4)
 	// Ширина плитки известна только здесь, а от неё зависит число колонок
 	// портов и, значит, их высота — поэтому список строится после раскладки.
 	ports := serverPortLines(server, rightWidth-4)
 
-	desired := len(units) + len(ports) + 2*panelOverhead
-	if docker {
-		desired = max(desired, len(dockerRows)+panelOverhead)
-	}
+	desired := max(len(units)+len(ports)+2*panelOverhead, len(dockerRows)+panelOverhead)
 	// Ряд берёт столько, сколько нужно содержимому, но не больше половины
 	// остатка: по макету низ экрана принадлежит логам. Половина уступает паре
 	// плиток (СЕРВИСЫ + ПОРТЫ), иначе на бюджете 10–11 строк потолок budget/2
@@ -122,19 +115,15 @@ func (m Model) serverBodyColumns(server collect.Metrics, width, budget int, unit
 			fitPanelHeight(ports, portsHeight-panelOverhead, 0))...)
 	}
 
-	body := right
-	if docker {
-		left := m.tilePanel(tileDocker, m.dockerTitle(), "d контейнеры", dockerWidth,
-			fitPanelHeight(dockerRows, rowHeight-panelOverhead, m.dashboard.tileScrolls[tileDocker]))
-		body = strings.Split(joinBoxes(left, right), "\n")
-	}
+	left := m.tilePanel(tileDocker, m.dockerTitle(), "d контейнеры", dockerWidth,
+		fitPanelHeight(dockerRows, rowHeight-panelOverhead, m.dashboard.tileScrolls[tileDocker]))
+	body := strings.Split(joinBoxes(left, right), "\n")
 	return append(body, m.serverLogsPanel(width, budget-len(body))...), truncated
 }
 
 // serverBodyStacked — та же тройка в одну колонку: на 80 колонках DOCKER,
 // СЕРВИСЫ и ПОРТЫ встают друг под друга, состав экрана при этом тот же.
 func (m Model) serverBodyStacked(server collect.Metrics, width, budget int, units []string) ([]string, bool) {
-	docker := m.dashboardHasDocker()
 	dockerRows := m.dashboardDockerContent(width - 4)
 	ports := serverPortLines(server, width-4)
 
@@ -144,21 +133,14 @@ func (m Model) serverBodyStacked(server collect.Metrics, width, budget int, unit
 	// что в колонках: первыми уходят ПОРТЫ, поэтому DOCKER берёт нужное ему
 	// целиком, а ПОРТЫ довольствуются остатком.
 	free := budget - minLogsHeight
-	dockerReserve := 0
-	if docker {
-		dockerReserve = minPanelHeight
-	}
-	servicesHeight := max(minPanelHeight, min(len(units)+panelOverhead, free-dockerReserve-minPanelHeight))
+	servicesHeight := max(minPanelHeight, min(len(units)+panelOverhead, free-2*minPanelHeight))
 	free -= servicesHeight
 
-	dockerHeight, truncated := 0, false
-	if docker {
-		dockerHeight = min(len(dockerRows)+panelOverhead, free)
-		if dockerHeight < minPanelHeight {
-			dockerHeight, truncated = 0, true
-		}
-		free -= dockerHeight
+	dockerHeight, truncated := min(len(dockerRows)+panelOverhead, free), false
+	if dockerHeight < minPanelHeight {
+		dockerHeight, truncated = 0, true
 	}
+	free -= dockerHeight
 	portsHeight := min(len(ports)+panelOverhead, free)
 	if portsHeight < minPanelHeight {
 		portsHeight, truncated = 0, true
@@ -172,7 +154,7 @@ func (m Model) serverBodyStacked(server collect.Metrics, width, budget int, unit
 	case dockerHeight > 0:
 		body = append(body, m.tilePanel(tileDocker, m.dockerTitle(), "d контейнеры", width,
 			fitPanelHeight(dockerRows, dockerHeight-panelOverhead, m.dashboard.tileScrolls[tileDocker]))...)
-	case docker && free > 0:
+	case free > 0:
 		// Плитка не помещается — остаются счётчики: сколько контейнеров живо,
 		// видно даже там, где на список строк уже нет.
 		body = append(body, fitLine(titleStyle.Render(m.dockerTitle()), width))
@@ -192,10 +174,7 @@ func (m Model) serverBodyCompact(server collect.Metrics, width, budget int) []st
 	if budget <= 0 {
 		return nil
 	}
-	summary := []string{m.servicesTitle(), portsTitle(server)}
-	if m.dashboardHasDocker() {
-		summary = append(summary, m.dockerTitle())
-	}
+	summary := []string{m.servicesTitle(), portsTitle(server), m.dockerTitle()}
 	body := []string{fitLine(titleStyle.Render(strings.Join(summary, " · ")), width)}
 	if budget == 1 {
 		return body
