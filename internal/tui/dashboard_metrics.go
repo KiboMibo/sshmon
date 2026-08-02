@@ -36,14 +36,19 @@ func loadColorStyle(load float64, numCPU int) string {
 // стоят в одних и тех же колонках при любой ширине ≥ 60.
 //
 // Колонка тренда у каждой метрики своя по макету: у MEM и DISK это заливка
-// текущего процента (история для одного числа не нужна), у NET её нет вовсе
-// (байты/с в шкалу не переводятся), а у CPU — настоящий тренд из кольца в
-// Model. Пустой ряд отдаётся как nil: сплошная линия historySparkline
-// читалась бы как «тренд ровный», хотя ряда ещё просто нет.
-func serverMetricGrid(server collect.Metrics, cpuSeries []*float64, width int) []string {
-	var cpuTrend, diskTrend metricTrend
+// текущего процента (история для одного числа не нужна), а у CPU и NET —
+// настоящий тренд из кольца в Model. У NET шкалы процентов нет (байты/с в них
+// не переводятся), зато есть ряд суммарного rx+tx: historySparkline нормирует
+// его по самой серии, и колонка перестаёт быть пустой без выдуманного «100 %».
+// Пустой ряд отдаётся как nil: сплошная линия historySparkline читалась бы как
+// «тренд ровный», хотя ряда ещё просто нет.
+func serverMetricGrid(server collect.Metrics, cpuSeries, netSeries []*float64, width int) []string {
+	var cpuTrend, netTrend, diskTrend metricTrend
 	if len(cpuSeries) > 0 {
 		cpuTrend = func(width int) string { return historySparkline(cpuSeries, width) }
+	}
+	if len(netSeries) > 0 {
+		netTrend = func(width int) string { return historySparkline(netSeries, width) }
 	}
 	diskPct, diskDetails := metricNoPercent, dimStyle.Render("диски не найдены")
 	if disk, ok := fullestDisk(server); ok {
@@ -53,35 +58,55 @@ func serverMetricGrid(server collect.Metrics, cpuSeries []*float64, width int) [
 	return []string{
 		metricRow("CPU", cpuTrend, server.CPUPct, cpuDetails(server), width),
 		metricRow("MEM", func(width int) string { return gauge(server.MemPct, width) }, server.MemPct, memoryDetails(server), width),
-		metricRow("NET", nil, metricNoPercent, networkDetails(server), width),
+		metricRow("NET", netTrend, metricNoPercent, networkDetails(server), width),
 		metricRow("DISK", diskTrend, diskPct, diskDetails, width),
 	}
 }
 
-// cpuTrendPoints — длина кольца тренда CPU: точка на тик коллектора, минута с
-// хвостом. Ряд живёт в Model, а не в базе истории: экран перерисовывается на
-// каждое событие, и запрос в БД на кадр этому тренду не окупается.
+// cpuTrendPoints — длина кольца тренда: точка на тик коллектора, минута с
+// хвостом. Ряды живут в Model, а не в базе истории: экран перерисовывается на
+// каждое событие, и запрос в БД на кадр этим трендам не окупается.
 const cpuTrendPoints = 60
 
-// recordCPUTrend добавляет точку CPU по каждому серверу свежего снапшота.
-// Карта пересобирается целиком, поэтому ряды серверов, пропавших из конфига
-// или снапшота, не переносятся и память не растёт. Сервер offline даёт nil —
-// разрыв в спарклайне, а не полку из последнего известного значения.
-func (m *Model) recordCPUTrend() {
-	trends := make(map[string][]*float64, len(m.snapshot.Servers))
-	for _, server := range m.snapshot.Servers {
+// recordTrends добавляет точку в кольца CPU и NET по каждому серверу свежего
+// снапшота. Оба ряда собираются в один проход и по одним правилам: разойдись
+// они длиной или составом хостов, две соседние строки сетки метрик показывали
+// бы разные отрезки времени.
+func (m *Model) recordTrends() {
+	m.cpuTrends = appendTrendPoints(m.cpuTrends, m.snapshot.Servers, func(s collect.Metrics) float64 { return s.CPUPct })
+	m.netTrends = appendTrendPoints(m.netTrends, m.snapshot.Servers, netTotalBps)
+}
+
+// appendTrendPoints возвращает новую карту рядов с добавленной точкой по
+// каждому серверу. Карта пересобирается целиком, поэтому ряды серверов,
+// пропавших из конфига или снапшота, не переносятся и память не растёт. Сервер
+// offline даёт nil — разрыв в спарклайне, а не полку из последнего известного
+// значения.
+func appendTrendPoints(previous map[string][]*float64, servers []collect.Metrics, value func(collect.Metrics) float64) map[string][]*float64 {
+	trends := make(map[string][]*float64, len(servers))
+	for _, server := range servers {
 		var point *float64
 		if server.Online {
-			value := server.CPUPct
-			point = &value
+			sample := value(server)
+			point = &sample
 		}
-		series := append(m.cpuTrends[server.Name], point)
+		series := append(previous[server.Name], point)
 		if len(series) > cpuTrendPoints {
 			series = series[len(series)-cpuTrendPoints:]
 		}
 		trends[server.Name] = series
 	}
-	m.cpuTrends = trends
+	return trends
+}
+
+// netTotalBps — суммарный трафик хоста: спарклайн NET рисует одну линию, а
+// интерфейсов на хосте несколько, и складывать их приходится до нормировки.
+func netTotalBps(server collect.Metrics) float64 {
+	var total float64
+	for _, device := range server.Net {
+		total += device.RxBps + device.TxBps
+	}
+	return total
 }
 
 func cpuDetails(server collect.Metrics) string {

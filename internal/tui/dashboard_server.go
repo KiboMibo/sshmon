@@ -39,7 +39,7 @@ func (m Model) serverScreenLines(server collect.Metrics) []string {
 		lines = append(lines, panelBox("ПРОБЛЕМЫ", "r обновить · ctrl+r переподключить", width, issueRows(m.dashboardIssueText(server.Name), width-4))...)
 	}
 	lines = append(lines, "")
-	lines = append(lines, serverMetricGrid(server, m.cpuTrends[server.Name], width)...)
+	lines = append(lines, serverMetricGrid(server, m.cpuTrends[server.Name], m.netTrends[server.Name], width)...)
 	lines = append(lines, "")
 
 	// Честный остаток: сколько строк реально осталось под средний ряд и логи

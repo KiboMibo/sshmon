@@ -78,7 +78,7 @@ func TestServerScreenMetricGridSharesOneColumnLayout(t *testing.T) {
 	m := serverScreenModel(120, 30)
 
 	// When: рисуется сетка метрик.
-	rows := serverMetricGrid(m.snapshot.Servers[0], nil, 120)
+	rows := serverMetricGrid(m.snapshot.Servers[0], nil, nil, 120)
 
 	// Then: четыре однородные строки с деталями макета на одной сетке.
 	if len(rows) != 4 {

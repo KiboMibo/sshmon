@@ -85,14 +85,13 @@ func TestServerMetricGridTrendCellPerMetric(t *testing.T) {
 	series := []*float64{&low, &high, &mid}
 
 	// Когда: сетка рисуется на широком терминале.
-	rows := serverMetricGrid(server, series, 120)
+	rows := serverMetricGrid(server, series, series, 120)
 
-	// Тогда: у CPU спарклайн, у MEM и DISK заливка, у NET колонка пуста.
-	if !strings.ContainsAny(rows[0], "▁▂▃▄▅▆▇") {
-		t.Fatalf("у CPU нет спарклайна тренда: %q", rows[0])
-	}
-	if strings.ContainsAny(rows[2], "█"+gaugeEmpty+"─▁▂▃▄▅▆▇") {
-		t.Fatalf("у NET колонка тренда должна быть пустой: %q", rows[2])
+	// Тогда: у CPU и NET спарклайн, у MEM и DISK заливка.
+	for _, index := range []int{0, 2} {
+		if !strings.ContainsAny(rows[index], "▁▂▃▄▅▆▇") {
+			t.Fatalf("строка %d осталась без спарклайна тренда: %q", index, rows[index])
+		}
 	}
 	for index, row := range map[int]string{1: rows[1], 3: rows[3]} {
 		if !strings.Contains(row, "█") || !strings.Contains(row, gaugeEmpty) {
@@ -114,33 +113,48 @@ func TestServerMetricGridSurvivesShortCPUSeries(t *testing.T) {
 	server := collect.Metrics{NumCPU: 2, CPUPct: 12, MemPct: 30}
 	single := 12.0
 
-	empty := serverMetricGrid(server, nil, 100)
-	if strings.ContainsAny(empty[0], "─█"+gaugeEmpty+"▁▂▃▄▅▆▇") {
-		t.Fatalf("пустой ряд CPU должен давать пустую колонку: %q", empty[0])
+	empty := serverMetricGrid(server, nil, nil, 100)
+	for _, index := range []int{0, 2} {
+		if strings.ContainsAny(empty[index], "─█"+gaugeEmpty+"▁▂▃▄▅▆▇") {
+			t.Fatalf("пустой ряд должен давать пустую колонку в строке %d: %q", index, empty[index])
+		}
 	}
-	one := serverMetricGrid(server, []*float64{&single}, 100)
-	if !strings.Contains(one[0], "▁") {
-		t.Fatalf("ряд в одну точку не нарисован: %q", one[0])
+	one := serverMetricGrid(server, []*float64{&single}, []*float64{&single}, 100)
+	for _, index := range []int{0, 2} {
+		if !strings.Contains(one[index], "▁") {
+			t.Fatalf("ряд в одну точку не нарисован в строке %d: %q", index, one[index])
+		}
 	}
 	// И: пропуск (сервер был offline) не роняет отрисовку.
-	gap := serverMetricGrid(server, []*float64{nil, &single}, 100)
+	gap := serverMetricGrid(server, []*float64{nil, &single}, []*float64{nil, &single}, 100)
 	if len(gap) != 4 {
 		t.Fatalf("сетка из %d строк, ожидалось 4", len(gap))
 	}
 }
 
-// TestRecordCPUTrendKeepsBoundedSeriesPerServer — Дано: поток снапшотов;
-// Когда: Model копит тренд CPU; Тогда: ряд ограничен по длине, а ряды
-// исчезнувших серверов не остаются в памяти.
-func TestRecordCPUTrendKeepsBoundedSeriesPerServer(t *testing.T) {
+// TestRecordTrendsKeepsBoundedSeriesPerServer — Дано: поток снапшотов;
+// Когда: Model копит тренды CPU и NET; Тогда: ряды ограничены по длине, идут
+// по одним правилам, а ряды исчезнувших серверов не остаются в памяти.
+func TestRecordTrendsKeepsBoundedSeriesPerServer(t *testing.T) {
 	// Дано: два сервера, один из которых offline.
 	m := Model{}
 	for range cpuTrendPoints + 10 {
 		m.snapshot = collect.Snapshot{Servers: []collect.Metrics{
-			{Name: "web", Online: true, CPUPct: 25},
+			{Name: "web", Online: true, CPUPct: 25, Net: []collect.NetRate{{Iface: "eth0", RxBps: 100, TxBps: 20}, {Iface: "eth1", RxBps: 5, TxBps: 1}}},
 			{Name: "db", Online: false, CPUPct: 99},
 		}}
-		m.recordCPUTrend()
+		m.recordTrends()
+	}
+
+	// Тогда: ряд NET живёт по тем же правилам и хранит сумму по интерфейсам.
+	if got := len(m.netTrends["web"]); got != cpuTrendPoints {
+		t.Fatalf("ряд NET web длиной %d, ожидалось %d", got, cpuTrendPoints)
+	}
+	if point := m.netTrends["web"][cpuTrendPoints-1]; point == nil || *point != 126 {
+		t.Fatalf("последняя точка NET web = %v, ожидалось 126", point)
+	}
+	if point := m.netTrends["db"][cpuTrendPoints-1]; point != nil {
+		t.Fatalf("offline-сервер должен давать пропуск и в ряду NET, получено %v", *point)
 	}
 
 	// Тогда: длина ряда ограничена кольцом, а offline даёт пропуск.
@@ -156,11 +170,34 @@ func TestRecordCPUTrendKeepsBoundedSeriesPerServer(t *testing.T) {
 
 	// Когда: сервер пропал из снапшота.
 	m.snapshot = collect.Snapshot{Servers: []collect.Metrics{{Name: "web", Online: true, CPUPct: 30}}}
-	m.recordCPUTrend()
+	m.recordTrends()
 
-	// Тогда: его ряд не переносится в новую карту.
+	// Тогда: его ряды не переносятся в новые карты.
 	if _, ok := m.cpuTrends["db"]; ok {
-		t.Fatal("ряд исчезнувшего сервера остался в памяти")
+		t.Fatal("ряд CPU исчезнувшего сервера остался в памяти")
+	}
+	if _, ok := m.netTrends["db"]; ok {
+		t.Fatal("ряд NET исчезнувшего сервера остался в памяти")
+	}
+}
+
+// TestNetTrendFillsTheNetRowOnScreen — Дано: экран сервера, на котором Model
+// уже накопила снапшоты; Когда: рисуется сетка метрик; Тогда: колонка тренда
+// строки NET занята спарклайном, а не пустотой.
+func TestNetTrendFillsTheNetRowOnScreen(t *testing.T) {
+	m := serverScreenModel(120, 30)
+	for i := range 5 {
+		m.snapshot.Servers[0].Net = []collect.NetRate{{Iface: "eth0", RxBps: float64(1000 * (i + 1)), TxBps: 500}}
+		m.recordTrends()
+	}
+
+	rows := serverMetricGrid(m.snapshot.Servers[0], m.cpuTrends[m.snapshot.Servers[0].Name], m.netTrends[m.snapshot.Servers[0].Name], 120)
+	if !strings.ContainsAny(rows[2], "▁▂▃▄▅▆▇█") {
+		t.Fatalf("колонка тренда NET осталась пустой: %q", rows[2])
+	}
+	// И: детали строки на месте — спарклайн встал в свою колонку, а не поверх них.
+	if !strings.Contains(rows[2], "rx") || !strings.Contains(rows[2], "tx") {
+		t.Fatalf("строка NET потеряла детали: %q", rows[2])
 	}
 }
 
