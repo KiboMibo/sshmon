@@ -311,10 +311,20 @@ func TestFleetCardAndDockerTileAgreeOnAccessDenied(t *testing.T) {
 	if !strings.Contains(tile, "нет доступа к docker") {
 		t.Fatalf("плитка молчит о причине:\n%s", tile)
 	}
-	// И: про чужой хост диагностика ничего не говорит — там остаются счётчики.
+	// И: про чужой хост диагностика ничего не говорит — там остаётся факт из
+	// сэмпла, а он различает «docker не ответил» и «контейнеров нет».
 	m.dashboard.server = "other"
-	if other := strings.Join(m.fleetCardLines(m.snapshot.Servers[0], 80), "\n"); !strings.Contains(other, "контейнеров нет") {
+	other := strings.Join(m.fleetCardLines(m.snapshot.Servers[0], 80), "\n")
+	if strings.Contains(other, "нет доступа к docker") {
 		t.Fatalf("состояние чужого хоста утекло в карточку:\n%s", other)
+	}
+	if !strings.Contains(other, "docker недоступен") {
+		t.Fatalf("карточка не назвала docker недоступным:\n%s", other)
+	}
+	server := m.snapshot.Servers[0]
+	server.Docker = collect.DockerCounts{Known: true}
+	if empty := strings.Join(m.fleetCardLines(server, 80), "\n"); !strings.Contains(empty, "контейнеров нет") {
+		t.Fatalf("живой docker без контейнеров назван недоступным:\n%s", empty)
 	}
 }
 

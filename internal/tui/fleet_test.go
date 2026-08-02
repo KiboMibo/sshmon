@@ -154,9 +154,17 @@ func TestFleetColumnsAppearOnlyWithDetailsAndDegrade(t *testing.T) {
 		t.Fatalf("headers = %q / %q", detailed.header(), plain.header())
 	}
 	// And on a narrow terminal the extra columns leave first, docker before uptime.
-	narrow := fleetColumnLayout(60, true)
+	narrow := fleetColumnLayout(70, true)
 	if narrow.docker || !narrow.uptime {
 		t.Fatalf("narrow details layout = %+v", narrow)
+	}
+	// На 60 колонках уходят обе: DISK принадлежит базовому набору и остаётся.
+	tight := fleetColumnLayout(60, true)
+	if tight.docker || tight.uptime {
+		t.Fatalf("tight details layout = %+v", tight)
+	}
+	if !strings.Contains(tight.header(), "DISK") {
+		t.Fatalf("колонка DISK ушла вместе с деталями: %q", tight.header())
 	}
 	if narrow.name < fleetNameMin {
 		t.Fatalf("host column shrank below the minimum: %+v", narrow)
@@ -179,9 +187,9 @@ func TestFleetTableFillsPanelWidth(t *testing.T) {
 			t.Run(fmt.Sprintf("%d/%v", width, detailed), func(t *testing.T) {
 				cols := fleetColumnLayout(width, detailed)
 				if cols.fixed() > width {
-					// Ширины не хватает даже на минимум — распорки нет, поведение прежнее.
-					if cols.stretch != 0 {
-						t.Fatalf("распорка на тесной раскладке: %+v", cols)
+					// Ширины не хватает даже на минимум — зазоры базовые, поведение прежнее.
+					if cols.lead != fleetGapWidth || cols.inner != fleetGapWidth {
+						t.Fatalf("зазоры разъехались на тесной раскладке: %+v", cols)
 					}
 					return
 				}
@@ -189,7 +197,9 @@ func TestFleetTableFillsPanelWidth(t *testing.T) {
 				// When: рисуются заголовок и строка хоста.
 				header := cols.header()
 				row := strings.Repeat(" ", len([]rune(fleetMarker))) +
-					cols.row("vm-prod-emarb", "⚠ память 96%", "2%", "96%", "0.79", "1718д", "●7 ○2 ⚠1")
+					// Значения ячеек различны нарочно: columnEnd ищет первое
+					// вхождение, и «96%» из колонки СОСТ перебило бы MEM.
+					cols.row("vm-prod-emarb", "⚠ память 96%", "2%", "94%", "88%", "0.79", "1718д", "●7 ○2 ⚠1")
 
 				// Then: обе строки ровно по ширине панели и колонки совпадают.
 				if got := lipgloss.Width(header); got != width {
@@ -199,15 +209,116 @@ func TestFleetTableFillsPanelWidth(t *testing.T) {
 					t.Fatalf("строка в %d ячеек при ширине панели %d: %q", got, width, row)
 				}
 				// Смещение считаем в ячейках, а не в байтах: в колонках кириллица.
-				if columnEnd(header, "CPU") != columnEnd(row, "2%") {
-					t.Fatalf("колонка CPU не под своим заголовком:\n%s\n%s", header, row)
-				}
-				if columnEnd(header, "LOAD") != columnEnd(row, "0.79") {
-					t.Fatalf("колонка LOAD не под своим заголовком:\n%s\n%s", header, row)
+				for _, pair := range [][2]string{{"CPU", "2%"}, {"MEM", "94%"}, {"DISK", "88%"}, {"LOAD", "0.79"}} {
+					if columnEnd(header, pair[0]) != columnEnd(row, pair[1]) {
+						t.Fatalf("колонка %s не под своим заголовком:\n%s\n%s", pair[0], header, row)
+					}
 				}
 			})
 		}
 	}
+}
+
+// TestFleetNumericGapsGrowWithPanelWidth — Дано: одна и та же таблица на
+// панелях разной ширины; Тогда: интервалы между числовыми колонками растут
+// вместе с панелью, а не только отступ перед блоком чисел. Без этого числа
+// снова слиплись бы у правой рамки в «4%  51%  0.00».
+func TestFleetNumericGapsGrowWithPanelWidth(t *testing.T) {
+	narrow, wide := fleetColumnLayout(80, false), fleetColumnLayout(200, false)
+	if wide.inner <= narrow.inner {
+		t.Fatalf("зазор между числами не вырос: %d при 80 против %d при 200", narrow.inner, wide.inner)
+	}
+	if narrow.inner < fleetGapWidth {
+		t.Fatalf("зазор уже базового: %+v", narrow)
+	}
+	// И: разбег между зазорами не больше остатка от деления — блок чисел
+	// разложен равномерно, а не «дырка перед CPU и слипшийся хвост».
+	if wide.lead-wide.inner >= len(wide.numericWidths()) {
+		t.Fatalf("ширина ушла в один отступ: lead=%d inner=%d", wide.lead, wide.inner)
+	}
+}
+
+// TestFleetDiskColumnPrefersRootPartition — Дано: хосты с разным набором
+// разделов; Тогда: в колонке DISK стоит «/», если он собран, иначе самый
+// заполненный раздел, а у offline-хоста — прочерк.
+func TestFleetDiskColumnPrefersRootPartition(t *testing.T) {
+	// Ширина 80: список в одну колонку без рамки и сайдбара, поэтому последние
+	// поля строки — это ровно ячейки DISK и LOAD.
+	for _, tc := range []struct {
+		name   string
+		online bool
+		disks  []collect.DiskUsage
+		want   string
+	}{
+		{"корень среди прочих", true, []collect.DiskUsage{{Mount: "/var", UsedPct: 97}, {Mount: "/", UsedPct: 41}, {Mount: "/boot", UsedPct: 12}}, "41%"},
+		{"корня нет", true, []collect.DiskUsage{{Mount: "/data", UsedPct: 63}, {Mount: "/srv", UsedPct: 88}}, "88%"},
+		{"дисков нет", true, nil, "—"},
+		{"нет связи", false, []collect.DiskUsage{{Mount: "/", UsedPct: 41}}, "—"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+				{Name: "kava", Group: "main", Online: tc.online, Time: time.Now(), Disks: tc.disks},
+			}}
+			m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(80, 24)}
+			view := stripANSI(m.View())
+			if !strings.Contains(view, "DISK") {
+				t.Fatalf("колонки DISK нет в списке:\n%s", view)
+			}
+			cols := strings.Fields(fleetRowOf(t, view, "kava"))
+			if got := cols[len(cols)-2]; got != tc.want {
+				t.Fatalf("колонка DISK = %q, want %q:\n%s", got, tc.want, view)
+			}
+		})
+	}
+}
+
+// TestFleetDockerColumnTellsThreeStates — Дано: три хоста в разном состоянии
+// docker'а; Тогда: колонка различает «не ответил», «контейнеров нет» и живые
+// счётчики — тем же видом «●7 ○2 ⚠1», что заголовок плитки экрана сервера.
+func TestFleetDockerColumnTellsThreeStates(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		counts collect.DockerCounts
+		want   string
+	}{
+		{"docker не ответил", collect.DockerCounts{}, "—"},
+		{"контейнеров нет", collect.DockerCounts{Known: true}, "●0"},
+		{"контейнеры есть", collect.DockerCounts{Running: 7, Stopped: 2, Broken: 1, Known: true}, "●7 ○2 ⚠1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dockerCell(tc.counts); got != tc.want {
+				t.Fatalf("dockerCell(%+v) = %q, want %q", tc.counts, got, tc.want)
+			}
+		})
+	}
+	// И: счётчики доезжают до строки списка из снапшота, а не только из
+	// диагностики выбранного хоста.
+	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+		{Name: "kava", Group: "main", Online: true, Time: time.Now()},
+		{Name: "db", Group: "main", Online: true, Time: time.Now(), Docker: collect.DockerCounts{Running: 7, Stopped: 2, Known: true}},
+	}}
+	m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(80, 30)}
+	m, _ = updateModel(t, m, key("right"))
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "DOCKER") {
+		t.Fatalf("колонки DOCKER нет в режиме деталей:\n%s", view)
+	}
+	if row := fleetRowOf(t, view, "db"); !strings.Contains(row, "●7 ○2") {
+		t.Fatalf("счётчики контейнеров не дошли до невыбранной строки: %q", row)
+	}
+}
+
+// fleetRowOf возвращает строку списка, в которой стоит имя хоста. Рамки
+// пропускаются: заголовок панели сайдбара тоже подписан именем хоста.
+func fleetRowOf(t *testing.T, view, name string) string {
+	t.Helper()
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, name+" ") && !strings.ContainsAny(line, "╭╰") {
+			return line
+		}
+	}
+	t.Fatalf("строка хоста %q не найдена:\n%s", name, view)
+	return ""
 }
 
 func TestFleetTableKeepsNumbersAtTheRightEdge(t *testing.T) {
@@ -233,6 +344,41 @@ func TestFleetTableKeepsNumbersAtTheRightEdge(t *testing.T) {
 	}
 	if !strings.Contains(stripANSI(row), "0.12 │") {
 		t.Fatalf("числа не дошли до правого края панели: %q", stripANSI(row))
+	}
+}
+
+// TestFleetCardBarsAreFramedAndAligned — Дано: раскрытая карточка с тремя
+// шкалами подряд; Тогда: у каждой своя рамка и все три начинаются и кончаются
+// в одной колонке — без этого cpu/mem/disk читались как один прямоугольник.
+func TestFleetCardBarsAreFramedAndAligned(t *testing.T) {
+	server := collect.Metrics{
+		Name: "kava", Online: true, Time: time.Now(), Hostname: "kava-claw", NumCPU: 2,
+		CPUPct: 4, MemPct: 51, MemTotalKB: 3800000, MemAvailKB: 1800000,
+		Disks: []collect.DiskUsage{{Mount: "/", TotalKB: 28000000, UsedKB: 25800000, UsedPct: 92}},
+	}
+	m := Model{screen: screenFleet, fleet: newFleetModel()}
+	for _, width := range []int{60, 100, 160} {
+		t.Run(strconv.Itoa(width), func(t *testing.T) {
+			var opens, closes []int
+			for _, line := range m.fleetCardLines(server, width) {
+				plain := stripANSI(line)
+				for _, label := range []string{"cpu", "mem", "disk"} {
+					if !strings.Contains(plain, label+" ") || !strings.Contains(plain, "[") {
+						continue
+					}
+					opens = append(opens, columnEnd(plain, "["))
+					closes = append(closes, columnEnd(plain, "]"))
+				}
+			}
+			if len(opens) != 3 {
+				t.Fatalf("обрамлены не все три шкалы: %v", opens)
+			}
+			for i := 1; i < 3; i++ {
+				if opens[i] != opens[0] || closes[i] != closes[0] {
+					t.Fatalf("шкалы разъехались: начала %v, концы %v", opens, closes)
+				}
+			}
+		})
 	}
 }
 

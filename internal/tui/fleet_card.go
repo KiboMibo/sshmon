@@ -79,6 +79,20 @@ func memoryTail(server collect.Metrics) string {
 	return tail
 }
 
+// rootDiskUsage — значение колонки DISK: корень, если он есть в собранных
+// данных, иначе самый заполненный раздел. Разделов на хосте бывает десяток, и
+// спрашивают обычно про «/»; когда его в df нет (контейнер, отдельный
+// дата-хост), показываем тот, что кончится первым. Раздел, переваливший порог,
+// всё равно назовёт себя по имени в колонке СОСТ.
+func rootDiskUsage(disks []collect.DiskUsage) (collect.DiskUsage, bool) {
+	for _, disk := range disks {
+		if disk.Mount == "/" {
+			return disk, true
+		}
+	}
+	return busiestDisk(disks)
+}
+
 func busiestDisk(disks []collect.DiskUsage) (collect.DiskUsage, bool) {
 	if len(disks) == 0 {
 		return collect.DiskUsage{}, false
@@ -115,7 +129,7 @@ func netTail(rates []collect.NetRate) string {
 func (m Model) dockerText(server collect.Metrics) string {
 	d := server.Docker
 	if d.Total() == 0 {
-		return dimStyle.Render(m.dockerEmptyText(server.Name))
+		return dimStyle.Render(m.dockerEmptyText(server))
 	}
 	parts := []string{goodStyle.Render(fmt.Sprintf("● %d запущено", d.Running))}
 	if d.Stopped > 0 {
@@ -127,16 +141,22 @@ func (m Model) dockerText(server collect.Metrics) string {
 	return strings.Join(parts, "  ")
 }
 
-// dockerEmptyText — почему в карточке не видно ни одного контейнера. Счётчики
-// сэмпла причину не знают: `docker ps` в общей команде глушит stderr, и «нет
-// прав» там неотличимо от «контейнеров нет». Причину знает диагностика экрана
-// сервера — берём её текст, если она про этот же хост, иначе два экрана про
-// один хост рассказывают разное.
-func (m Model) dockerEmptyText(server string) string {
-	if m.dashboard.server != server || m.dashboard.containers.status == diagnosticsIdle {
-		return "контейнеров нет"
+// dockerEmptyText — почему в карточке не видно ни одного контейнера. Точную
+// причину («нет прав», «демон не отвечает») знает только диагностика экрана
+// сервера — её текст берём первым, если она про этот же хост, иначе два экрана
+// про один хост рассказывают разное. Для остальных хостов остаётся факт из
+// сэмпла: он различает «docker не ответил» и «контейнеров нет», а формулировки
+// те же, что у dockerStateText.
+func (m Model) dockerEmptyText(server collect.Metrics) string {
+	if m.dashboard.server == server.Name && m.dashboard.containers.status != diagnosticsIdle {
+		return dockerStateText(m.dashboard.containers)
 	}
-	return dockerStateText(m.dashboard.containers)
+	if !server.Docker.Known {
+		// Не «не установлен»: сэмпл глушит stderr и не отличает отсутствие
+		// docker'а от отказа в правах. Разделяет их только диагностика выше.
+		return "docker недоступен"
+	}
+	return "контейнеров нет"
 }
 
 func portsTail(ports []collect.Port) string {

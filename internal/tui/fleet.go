@@ -283,23 +283,42 @@ type fleetColumns struct {
 	name  int
 	state int
 	gap   string
-	// stretch — распорка между блоком «имя + состояние» и блоком чисел. Без неё
-	// таблица кончалась там, где кончалось самое длинное имя хоста, и правая
-	// половина панели оставалась пустой.
-	stretch int
-	uptime  bool
-	docker  bool
+	// lead и inner — зазоры блока чисел: lead стоит между «имя + состояние» и
+	// первой числовой колонкой, inner — между самими числами. Свободная ширина
+	// панели делится между ними поровну. Прежняя единственная распорка перед
+	// блоком уводила числа к правой рамке, где они слипались в «4%  51%  0.00»,
+	// а середина строки оставалась пустой.
+	lead   int
+	inner  int
+	uptime bool
+	docker bool
+}
+
+// fleetNumericWidths — ширины числовых колонок в порядке отрисовки. DISK стоит
+// сразу за MEM: три процентные шкалы читаются вместе, а load — уже другая
+// величина. UPTIME и DOCKER принадлежат режиму деталей.
+func (c fleetColumns) numericWidths() []int {
+	widths := []int{4, 4, 4, 6} // cpu, mem, disk, load
+	if c.uptime {
+		widths = append(widths, 7)
+	}
+	if c.docker {
+		widths = append(widths, fleetDockerWidth)
+	}
+	return widths
 }
 
 // fleetColumnLayout выбирает состав колонок по режиму и ширине: UPTIME и DOCKER
 // принадлежат режиму деталей (макет 3b), в списке с сайдбаром их нет (макет 3a).
-// На узком терминале они же уходят первыми — имя хоста и состояние должны
-// оставаться читаемыми на любой ширине.
+// На узком терминале они же уходят первыми — имя хоста, состояние и три
+// процентные колонки должны оставаться читаемыми на любой ширине.
 func fleetColumnLayout(width int, detailed bool) fleetColumns {
 	cols := fleetColumns{
 		width:  width,
 		state:  fleetStateWidth,
 		gap:    strings.Repeat(" ", fleetGapWidth),
+		lead:   fleetGapWidth,
+		inner:  fleetGapWidth,
 		uptime: detailed,
 		docker: detailed,
 	}
@@ -311,53 +330,63 @@ func fleetColumnLayout(width int, detailed bool) fleetColumns {
 		cols.uptime = false
 	}
 	cols.name = fleetNameMin + max(0, min(fleetNameMax-fleetNameMin, width-cols.fixed()))
-	// Остаток ширины уходит целиком в распорку: имя хоста длиннее fleetNameMax
-	// не читается лучше, а блок чисел на правом краю панели совпадает с краем
-	// заголовка и не висит в воздухе посреди рамки.
-	cols.stretch = max(0, width-cols.fixed()-(cols.name-fleetNameMin))
+	// Имя хоста длиннее fleetNameMax не читается лучше, поэтому весь остаток
+	// ширины уходит в зазоры блока чисел — поровну, чтобы интервалы между
+	// колонками росли вместе с панелью, а не только отступ перед ними. Остаток
+	// от деления достаётся lead: так последняя колонка остаётся у правого края
+	// панели, вплотную к краю заголовка.
+	extra := max(0, width-cols.fixed()-(cols.name-fleetNameMin))
+	gaps := len(cols.numericWidths())
+	cols.lead += extra/gaps + extra%gaps
+	cols.inner += extra / gaps
 	return cols
 }
 
-// fixed — ширина строки при минимальном имени хоста и без распорки: по ней
+// fixed — ширина строки при минимальном имени хоста и базовых зазорах: по ней
 // решается, какие колонки ещё помещаются и сколько места остаётся имени.
 func (c fleetColumns) fixed() int {
-	total, count := fleetNameMin+c.state+4+4+6, 5
-	if c.uptime {
-		total, count = total+7, count+1
+	total := fleetNameMin + c.state
+	widths := c.numericWidths()
+	for _, w := range widths {
+		total += w
 	}
-	if c.docker {
-		total, count = total+fleetDockerWidth, count+1
-	}
-	return total + fleetGapWidth*(count-1) + len([]rune(fleetMarker))
+	// Зазоров на один больше, чем числовых колонок: между именем и состоянием,
+	// перед блоком чисел и между самими числами.
+	return total + fleetGapWidth*(len(widths)+1) + len([]rune(fleetMarker))
 }
 
-func (c fleetColumns) row(name, state, cpu, mem, load, uptime, docker string) string {
+func (c fleetColumns) row(name, state, cpu, mem, disk, load, uptime, docker string) string {
 	// padLabel/padLeft, а не «%-*s» и «%7s»: ячейка состояния приходит цветной,
 	// «—» и «140д» — многобайтные, и ширину нужно считать по терминальным
 	// ячейкам, а не по байтам строки.
-	left := []string{
-		padLabel(truncateCells(name, c.name), c.name),
-		padLabel(state, c.state),
-	}
-	right := []string{
-		padLeft(cpu, 4),
-		padLeft(mem, 4),
-		padLeft(load, 6),
-	}
+	values := []string{cpu, mem, disk, load}
 	if c.uptime {
-		right = append(right, padLeft(uptime, 7))
+		values = append(values, uptime)
 	}
 	if c.docker {
-		// Ячейка контейнеров держит ширину даже пустой: без неё последняя
-		// колонка гуляла бы по строке и заголовок DOCKER стоял бы не над ней.
-		right = append(right, padLabel(truncateCells(docker, fleetDockerWidth), fleetDockerWidth))
+		values = append(values, docker)
 	}
-	return strings.Join(left, c.gap) + c.gap + strings.Repeat(" ", c.stretch) + strings.Join(right, c.gap)
+	row := padLabel(truncateCells(name, c.name), c.name) + c.gap +
+		padLabel(state, c.state) + strings.Repeat(" ", c.lead)
+	for i, width := range c.numericWidths() {
+		if i > 0 {
+			row += strings.Repeat(" ", c.inner)
+		}
+		if c.docker && i == len(values)-1 {
+			// Ячейка контейнеров держит ширину даже пустой и выровнена влево:
+			// без этого последняя колонка гуляла бы по строке и заголовок
+			// DOCKER стоял бы не над ней.
+			row += padLabel(truncateCells(values[i], width), width)
+			continue
+		}
+		row += padLeft(values[i], width)
+	}
+	return row
 }
 
 func (c fleetColumns) header() string {
 	return strings.Repeat(" ", len([]rune(fleetMarker))) +
-		c.row("ХОСТ", "СОСТ", "CPU", "MEM", "LOAD", "UPTIME", "DOCKER")
+		c.row("ХОСТ", "СОСТ", "CPU", "MEM", "DISK", "LOAD", "UPTIME", "DOCKER")
 }
 
 func (m Model) renderFleetRow(index int, cols fleetColumns) string {
@@ -371,10 +400,16 @@ func (m Model) renderFleetRow(index int, cols fleetColumns) string {
 		// обрывает фон подсветки.
 		state = text
 	}
-	cpu, mem, load, uptime := "—", "—", "—", "—"
+	cpu, mem, disk, load, uptime := "—", "—", "—", "—", "—"
 	if server.Online {
 		cpu = fmt.Sprintf("%.0f%%", server.CPUPct)
 		mem = fmt.Sprintf("%.0f%%", server.MemPct)
+		// Формат и отсутствие своего цвета — как у MEM: у выделенной строки
+		// вложенный ANSI-reset оборвал бы фон подсветки, поэтому цветом в этой
+		// таблице говорит только колонка СОСТ.
+		if usage, ok := rootDiskUsage(server.Disks); ok {
+			disk = fmt.Sprintf("%.0f%%", usage.UsedPct)
+		}
 		load = fmt.Sprintf("%.2f", server.Load1)
 		uptime = formatUptime(server.Uptime)
 	}
@@ -384,20 +419,22 @@ func (m Model) renderFleetRow(index int, cols fleetColumns) string {
 	if selected {
 		marker = fleetMarker
 	}
-	row := marker + cols.row(server.Name, state, cpu, mem, load, uptime, dockerCell(server.Docker))
+	row := marker + cols.row(server.Name, state, cpu, mem, disk, load, uptime, dockerCell(server.Docker))
 	// fitLine до Width: слишком длинную строку lipgloss переносит на вторую, и
 	// подсветка выделения растекалась бы на две строки списка.
 	return fleetRowStyle(selected).Width(cols.width).Render(fitLine(row, cols.width))
 }
 
+// dockerCell — ячейка колонки DOCKER, тот же вид «●7 ○2 ⚠1», что в заголовке
+// плитки DOCKER экрана сервера: один и тот же факт не должен выглядеть на двух
+// экранах по-разному. Прочерк означает «docker не ответил», «●0» — «docker есть,
+// контейнеров нет»: одним прочерком эти состояния путать нельзя.
 func dockerCell(d collect.DockerCounts) string {
-	if d.Total() == 0 {
+	if !d.Known {
 		return "—"
 	}
 	parts := make([]string, 0, 3)
-	if d.Running > 0 {
-		parts = append(parts, fmt.Sprintf("●%d", d.Running))
-	}
+	parts = append(parts, fmt.Sprintf("●%d", d.Running))
 	if d.Stopped > 0 {
 		parts = append(parts, fmt.Sprintf("○%d", d.Stopped))
 	}
