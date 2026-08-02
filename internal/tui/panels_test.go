@@ -14,8 +14,8 @@ func TestGaugeClampsPercentageAndKeepsExactWidth(t *testing.T) {
 		value float64
 		want  string
 	}{
-		{value: -10, want: "[░░░░░░░░]"},
-		{value: 50, want: "[████░░░░]"},
+		{value: -10, want: "[········]"},
+		{value: 50, want: "[████····]"},
 		{value: 150, want: "[████████]"},
 	} {
 		// When: a ten-cell gauge is rendered.
@@ -275,4 +275,54 @@ func runeIndexOf(value, substring string) int {
 		return -1
 	}
 	return len([]rune(value[:index]))
+}
+
+// TestGaugeSeparatesFillFromTrack — Дано: три бара подряд, как в карточке
+// хоста; Когда: они отрисованы; Тогда: заливка и дорожка разной фактуры (без
+// сплошной «░», в которой три строки сливались в один прямоугольник), сами
+// строки различимы, а цвет заливки берёт те же пороги, что и процент рядом.
+func TestGaugeSeparatesFillFromTrack(t *testing.T) {
+	rows := make([]string, 0, 3)
+	for _, value := range []float64{6, 41, 78} {
+		rows = append(rows, gauge(value, 20))
+	}
+	for _, row := range rows {
+		if strings.Contains(row, "░") {
+			t.Fatalf("незаполненная часть осталась сплошной заливкой: %q", row)
+		}
+		if !strings.Contains(row, gaugeFilled) || !strings.Contains(row, gaugeEmpty) {
+			t.Fatalf("бар потерял одну из двух фактур: %q", row)
+		}
+		if lipgloss.Width(row) != 20 {
+			t.Fatalf("ширина бара = %d, ожидалось 20: %q", lipgloss.Width(row), row)
+		}
+	}
+	for index := 1; index < len(rows); index++ {
+		if rows[index] == rows[index-1] {
+			t.Fatalf("соседние бары неразличимы: %q", rows[index])
+		}
+		if strings.Count(rows[index], gaugeFilled) <= strings.Count(rows[index-1], gaugeFilled) {
+			t.Fatalf("заливка не растёт вместе со значением: %q после %q", rows[index], rows[index-1])
+		}
+	}
+
+	// И: пороги подсветки одни на бар и на число — вторых порогов нет.
+	for _, tc := range []struct {
+		value float64
+		alert bool
+		style lipgloss.Style
+	}{
+		{74.9, false, goodStyle},
+		{75, true, warnStyle},
+		{89.9, true, warnStyle},
+		{90, true, criticalStyle},
+	} {
+		style, alert := percentSeverity(tc.value)
+		if alert != tc.alert {
+			t.Fatalf("percentSeverity(%v): alert = %v, ожидалось %v", tc.value, alert, tc.alert)
+		}
+		if alert && style.GetForeground() != tc.style.GetForeground() {
+			t.Fatalf("percentSeverity(%v): цвет %v, ожидался %v", tc.value, style.GetForeground(), tc.style.GetForeground())
+		}
+	}
 }

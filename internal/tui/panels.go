@@ -12,6 +12,18 @@ import (
 // треть шкалы, и «мало» стало бы неотличимо от «много».
 const gaugeFramedMin = 6
 
+const (
+	// gaugeFilled/gaugeEmpty — фактура шкалы. Пустая часть рисуется точечной
+	// дорожкой, а не заливкой «░»: три бара подряд (cpu/mem/disk в карточке и в
+	// сетке метрик) сливались в один серый прямоугольник, в котором строки уже
+	// не различались. Точка занимает середину ячейки и оставляет над и под
+	// собой просвет — тот самый «зазор в пару пикселей», которого в терминале
+	// нет. Сплошная «─» тут не годится: ею historySparkline рисует мёртвый ряд,
+	// и два разных факта выглядели бы одинаково.
+	gaugeFilled = "█"
+	gaugeEmpty  = "·"
+)
+
 // gauge рисует шкалу ровно в width ячеек. Скобки по краям — не украшение:
 // три бара подряд (cpu/mem/disk в карточке хоста) без них сливались в один
 // прямоугольник. Рамка входит в width, поэтому колонка тренда в сетке метрик
@@ -23,14 +35,33 @@ func gauge(value float64, width int) string {
 	if width < gaugeFramedMin {
 		return gaugeScale(value, width)
 	}
-	return "[" + gaugeScale(value, width-2) + "]"
+	// Скобки тусклые: рамка — служебная разметка, внимание принадлежит заливке.
+	return dimStyle.Render("[") + gaugeScale(value, width-2) + dimStyle.Render("]")
 }
 
 func gaugeScale(value float64, width int) string {
 	// Кламп по числу ячеек, а не по проценту: NaN на входе даёт непредсказуемый
 	// int, и strings.Repeat с отрицательным счётчиком уронил бы рендер.
 	filled := max(0, min(width, int(math.Round(value*float64(width)/100))))
-	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+	// Цвет заливки — по тем же порогам, что у процента рядом: бар и число
+	// говорят об одном, и расходиться в оценке они не имеют права. Ниже порогов
+	// заливка зелёная, а не бесцветная: одинаковый цвет у всех спокойных баров
+	// и есть признак «всё в норме».
+	style, alert := percentSeverity(value)
+	if !alert {
+		style = goodStyle
+	}
+	return repeatStyled(style, gaugeFilled, filled) + repeatStyled(dimStyle, gaugeEmpty, width-filled)
+}
+
+// repeatStyled — count повторов glyph под одним стилем. Пустая часть отдаётся
+// пустой строкой: lipgloss на «» всё равно выписал бы пару escape-кодов, а
+// fitLine потом считал бы их незакрытым стилем.
+func repeatStyled(style lipgloss.Style, glyph string, count int) string {
+	if count <= 0 {
+		return ""
+	}
+	return style.Render(strings.Repeat(glyph, count))
 }
 
 // historySparkline рисует серию в width ячеек. Значения нормируются по
@@ -137,13 +168,26 @@ func metricPercentCell(percent float64) string {
 	}
 	value := min(100, percent)
 	cell := fmt.Sprintf("%*.0f%%", metricRowPercentWidth-1, value)
+	// Число подсвечивается только за порогом: цвет спокойного значения уже
+	// несёт заливка бара слева, и красить сюда то же самое — значит потерять
+	// выделение как раз там, где оно нужно.
+	if style, alert := percentSeverity(value); alert {
+		return style.Render(cell)
+	}
+	return cell
+}
+
+// percentSeverity — единственные пороги «внимание / критично» для процентных
+// метрик: 75 % и 90 %. Их делят число в сетке метрик и заливка бара, поэтому
+// живут они здесь, а не по копии на каждом вызове.
+func percentSeverity(value float64) (lipgloss.Style, bool) {
 	switch {
 	case value >= 90:
-		return criticalStyle.Render(cell)
+		return criticalStyle, true
 	case value >= 75:
-		return warnStyle.Render(cell)
+		return warnStyle, true
 	default:
-		return cell
+		return lipgloss.Style{}, false
 	}
 }
 

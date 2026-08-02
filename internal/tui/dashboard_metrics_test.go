@@ -91,13 +91,13 @@ func TestServerMetricGridTrendCellPerMetric(t *testing.T) {
 	if !strings.ContainsAny(rows[0], "▁▂▃▄▅▆▇") {
 		t.Fatalf("у CPU нет спарклайна тренда: %q", rows[0])
 	}
+	if strings.ContainsAny(rows[2], "█"+gaugeEmpty+"─▁▂▃▄▅▆▇") {
+		t.Fatalf("у NET колонка тренда должна быть пустой: %q", rows[2])
+	}
 	for index, row := range map[int]string{1: rows[1], 3: rows[3]} {
-		if !strings.Contains(row, "█") || !strings.Contains(row, "░") {
+		if !strings.Contains(row, "█") || !strings.Contains(row, gaugeEmpty) {
 			t.Fatalf("строка %d не заливка текущего процента: %q", index, row)
 		}
-	}
-	if strings.ContainsAny(rows[2], "█░─▁▂▃▄▅▆▇") {
-		t.Fatalf("у NET колонка тренда должна быть пустой: %q", rows[2])
 	}
 	// Тогда: мёртвой сплошной черты нет ни в одной строке.
 	for index, row := range rows {
@@ -115,7 +115,7 @@ func TestServerMetricGridSurvivesShortCPUSeries(t *testing.T) {
 	single := 12.0
 
 	empty := serverMetricGrid(server, nil, 100)
-	if strings.ContainsAny(empty[0], "─█░▁▂▃▄▅▆▇") {
+	if strings.ContainsAny(empty[0], "─█"+gaugeEmpty+"▁▂▃▄▅▆▇") {
 		t.Fatalf("пустой ряд CPU должен давать пустую колонку: %q", empty[0])
 	}
 	one := serverMetricGrid(server, []*float64{&single}, 100)
