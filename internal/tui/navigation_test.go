@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/kibomibo/sshmon/internal/collect"
 )
 
 func TestNavigationDrillsIntoServerAndReturnsToFleet(t *testing.T) {
@@ -134,6 +137,59 @@ func TestFleetSidebarLoadsTopProcessesWhenShown(t *testing.T) {
 	started, cmd := updateModel(t, sized, debounceMsg{kind: debounceTopProcesses, generation: sized.processes.generation})
 	if cmd == nil || started.processes.cancel == nil {
 		t.Fatalf("после паузы первичный запрос не ушёл: cmd=%v cancel=%v", cmd, started.processes.cancel != nil)
+	}
+}
+
+// TestFleetSidebarRefreshesOnDiagnosticsTick — Дано: видимый сайдбар с уже
+// полученными процессами; Когда: приходит тик диагностики; Тогда: раздел
+// «ТОП ПО ПАМЯТИ» перезапрашивает данные, а скрытый сайдбар опрос прекращает.
+func TestFleetSidebarRefreshesOnDiagnosticsTick(t *testing.T) {
+	// Дано: экран флота с видимым сайдбаром и ответом `ps` на руках.
+	m := Model{screen: screenFleet, snapshot: snapshotWithServers("web"), layout: newLayout(120, 30), fleet: newFleetModel()}
+	m.request, m.processes.generation = 7, 7
+	loaded, cmd := updateModel(t, m, processesResultMsg{generation: 7, items: []collect.Process{{PID: 1, Command: "java", MemPct: 40}}})
+	if cmd == nil {
+		t.Fatal("ответ `ps` не запланировал следующий опрос")
+	}
+	if len(loaded.processes.items) != 1 {
+		t.Fatalf("ответ не применён: %#v", loaded.processes.items)
+	}
+
+	// Когда: тик диагностики пришёл на экране флота, а не на экране процессов.
+	ticked, cmd := updateModel(t, loaded, diagnosticsTickMsg{screen: screenProcesses, generation: loaded.processes.generation})
+
+	// Тогда: ушёл новый запрос со своим контекстом и новым поколением.
+	if cmd == nil || ticked.processes.cancel == nil {
+		t.Fatalf("тик не обновил сайдбар: cmd=%v cancel=%v", cmd, ticked.processes.cancel != nil)
+	}
+	if ticked.processes.generation == loaded.processes.generation {
+		t.Fatal("поколение не сменилось — ответ старого запроса перезапишет новый")
+	}
+	// Тогда: прежний список остаётся на экране до ответа — сайдбар не мигает.
+	if len(ticked.processes.items) != 1 {
+		t.Fatalf("сайдбар обнулил список на время опроса: %#v", ticked.processes.items)
+	}
+
+	// И: свежий ответ заменяет данные в разделе.
+	updated, _ := updateModel(t, ticked, processesResultMsg{generation: ticked.processes.generation,
+		items: []collect.Process{{PID: 2, Command: "postgres", MemPct: 60}}})
+	shown := strings.Join(updated.fleetTopMemoryLines(updated.snapshot.Servers[0], 40), "\n")
+	if !strings.Contains(shown, "postgres") || strings.Contains(shown, "java") {
+		t.Fatalf("раздел показывает старый снимок:\n%s", shown)
+	}
+
+	// И: скрытый сайдбар по ssh больше не ходит.
+	hidden := ticked
+	hidden.fleet.preview = false
+	if _, cmd := updateModel(t, hidden, diagnosticsTickMsg{screen: screenProcesses, generation: hidden.processes.generation}); cmd != nil {
+		t.Fatal("скрытый сайдбар продолжает опрашивать хост")
+	}
+
+	// И: уход с экрана флота опрос тоже останавливает.
+	away := ticked
+	away.screen = screenDashboard
+	if _, cmd := updateModel(t, away, diagnosticsTickMsg{screen: screenProcesses, generation: away.processes.generation}); cmd != nil {
+		t.Fatal("опрос сайдбара пережил уход с экрана флота")
 	}
 }
 

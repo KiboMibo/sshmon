@@ -111,8 +111,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case debounceMsg:
 		return m, m.applyDebounce(msg)
 	case diagnosticsTickMsg:
-		if msg.screen == m.screen && msg.generation == m.diagnosticsGeneration(msg.screen) {
+		if msg.generation != m.diagnosticsGeneration(msg.screen) {
+			return m, nil
+		}
+		if msg.screen == m.screen {
 			return m, m.startDiagnostics()
+		}
+		// Сайдбар флота живёт на состоянии процессов, но экран при этом
+		// screenFleet — по равенству экранов тик отбрасывался, и «ТОП ПО
+		// ПАМЯТИ» замирал на снимке момента последнего движения курсора.
+		// Дебаунс здесь не нужен: тик приходит по таймеру, а не с клавиатуры.
+		if msg.screen == screenProcesses && m.fleetSidebarVisible() {
+			return m, m.refreshFleetTopProcesses()
 		}
 		return m, nil
 	case historyResultMsg:

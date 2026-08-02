@@ -126,11 +126,22 @@ func (m *Model) scheduleFleetTopProcesses() tea.Cmd {
 	return debounceTick(debounceTopProcesses, m.processes.generation)
 }
 
-// startFleetTopProcesses запрашивает процессы выбранного хоста для сайдбара.
-// Механизм общий с экраном процессов — то же состояние и то же сообщение с
-// результатом, поэтому переход на экран процессов не начинает всё заново, а
-// прошлый запрос снимается по контексту.
+// startFleetTopProcesses запрашивает процессы вновь выбранного хоста для
+// сайдбара. Механизм общий с экраном процессов — то же состояние и то же
+// сообщение с результатом, поэтому переход на экран процессов не начинает всё
+// заново, а прошлый запрос снимается по контексту.
 func (m *Model) startFleetTopProcesses() tea.Cmd {
+	return m.requestFleetTopProcesses(true)
+}
+
+// refreshFleetTopProcesses — плановое обновление сайдбара по тику диагностики.
+// Хост тот же, поэтому прошлый список остаётся на экране до ответа: обнуляй мы
+// его, раздел мигал бы «загрузка…» каждый период опроса.
+func (m *Model) refreshFleetTopProcesses() tea.Cmd {
+	return m.requestFleetTopProcesses(false)
+}
+
+func (m *Model) requestFleetTopProcesses(reset bool) tea.Cmd {
 	m.ensureFleet()
 	// Отмена — до проверки видимости: сайдбар мог пропасть как раз сейчас
 	// («v», раскрытие карточки, сузившийся терминал), и уже идущий `ps`
@@ -150,8 +161,10 @@ func (m *Model) startFleetTopProcesses() tea.Cmd {
 	generation := m.request
 	ctx, cancel := context.WithCancel(context.Background())
 	m.processes.generation, m.processes.cancel, m.processes.status = generation, cancel, diagnosticsLoading
-	// Список от прежнего хоста под именем нового читался бы как его процессы.
-	m.processes.items = nil
+	if reset {
+		// Список от прежнего хоста под именем нового читался бы как его процессы.
+		m.processes.items = nil
+	}
 	return runDiagnostics(ctx, generation, screenProcesses, m.selectedName(), m.collector)
 }
 
