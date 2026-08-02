@@ -61,11 +61,32 @@ func (s *portScreen) apply(items []collect.Port, err error) {
 	s.finish(err, len(s.items) > 0)
 }
 
+// portsRootHint объясняет пустую колонку процесса: `ss` и `netstat` называют
+// владельца сокета только своему пользователю, чужие процессы видит лишь root.
+// Пустая строка означает «объяснять нечего»: либо портов нет вовсе, либо хотя
+// бы один процесс назвался, и тогда пустота у остальных — уже не про права.
+func portsRootHint(ports []collect.Port) string {
+	if len(ports) == 0 {
+		return ""
+	}
+	for _, port := range ports {
+		if port.Process != "" {
+			return ""
+		}
+	}
+	return "имя процесса видно только под root"
+}
+
 var _ screen = portScreen{}
 
 func (s portScreen) view(ctx screenContext) string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("sshmon · "+ctx.serverName+" · Порты") + "\n\n")
+	// Подсказка выше таблицы, а не под ней: список бывает в полсотни строк, и
+	// объяснение пустой колонки не должно уезжать за нижний край экрана.
+	if hint := portsRootHint(s.items); hint != "" {
+		b.WriteString(dimStyle.Render(hint) + "\n\n")
+	}
 	b.WriteString("PROTO   LOCAL                         ПРОЦЕСС             PID\n")
 	for _, p := range sortPorts(s.items, s.sort) {
 		b.WriteString(fmt.Sprintf("%-7s %-29s %-19s %d\n", p.Proto, p.Local, p.Process, p.PID))

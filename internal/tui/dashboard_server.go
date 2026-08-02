@@ -86,7 +86,7 @@ func (m Model) serverBodyColumns(server collect.Metrics, width, budget int, unit
 	dockerRows := m.dashboardDockerContent(dockerWidth - 4)
 	// Ширина плитки известна только здесь, а от неё зависит число колонок
 	// портов и, значит, их высота — поэтому список строится после раскладки.
-	ports := serverPortLines(server, rightWidth-4)
+	ports := m.serverPortTileLines(server, rightWidth-4)
 
 	desired := max(len(units)+len(ports)+2*panelOverhead, len(dockerRows)+panelOverhead)
 	// Ряд берёт столько, сколько нужно содержимому, но не больше половины
@@ -124,7 +124,7 @@ func (m Model) serverBodyColumns(server collect.Metrics, width, budget int, unit
 // СЕРВИСЫ и ПОРТЫ встают друг под друга, состав экрана при этом тот же.
 func (m Model) serverBodyStacked(server collect.Metrics, width, budget int, units []string) ([]string, bool) {
 	dockerRows := m.dashboardDockerContent(width - 4)
-	ports := serverPortLines(server, width-4)
+	ports := m.serverPortTileLines(server, width-4)
 
 	// Каждая плитка получает желаемую высоту, но не за счёт чужого минимума:
 	// иначе длинный список юнитов съедал бы ряд целиком. Первый резерв —
@@ -329,6 +329,18 @@ func serverPortLines(server collect.Metrics, width int) []string {
 		entries = append(entries, entry)
 	}
 	return portColumns(entries, width)
+}
+
+// serverPortTileLines — содержимое плитки ПОРТЫ: раскладка записей и, когда
+// имя процесса не досталось ни одной, строка с причиной. Подсказка идёт первой
+// и входит в контент до расчёта высоты: уехавшее под нижнюю рамку объяснение
+// не отличалось бы от его отсутствия.
+func (m Model) serverPortTileLines(server collect.Metrics, width int) []string {
+	lines := serverPortLines(server, width)
+	if hint := portsRootHint(server.Ports); hint != "" {
+		return append([]string{dimStyle.Render(fitLine(hint, width))}, lines...)
+	}
+	return lines
 }
 
 const (
