@@ -72,16 +72,15 @@ func (m Model) serverBody(server collect.Metrics, width, budget int) ([]string, 
 		return m.serverBodyCompact(server, width, budget), true
 	}
 	units := m.dashboardUnitsContent()
-	ports := serverPortLines(server)
 	if m.layout.twoColumn() {
-		return m.serverBodyColumns(server, width, budget, units, ports)
+		return m.serverBodyColumns(server, width, budget, units)
 	}
-	return m.serverBodyStacked(server, width, budget, units, ports)
+	return m.serverBodyStacked(server, width, budget, units)
 }
 
 // serverBodyColumns — DOCKER слева, СЕРВИСЫ и ПОРТЫ справа, логи под ними.
 // Колонки ряда равной высоты, поэтому высота ПОРТОВ вычитается из СЕРВИСОВ.
-func (m Model) serverBodyColumns(server collect.Metrics, width, budget int, units, ports []string) ([]string, bool) {
+func (m Model) serverBodyColumns(server collect.Metrics, width, budget int, units []string) ([]string, bool) {
 	docker := m.dashboardHasDocker()
 	dockerWidth, rightWidth := 0, width
 	if docker {
@@ -89,6 +88,9 @@ func (m Model) serverBodyColumns(server collect.Metrics, width, budget int, unit
 		rightWidth = width - 2 - dockerWidth
 	}
 	dockerRows := m.dashboardDockerContent(dockerWidth - 4)
+	// Ширина плитки известна только здесь, а от неё зависит число колонок
+	// портов и, значит, их высота — поэтому список строится после раскладки.
+	ports := serverPortLines(server, rightWidth-4)
 
 	desired := len(units) + len(ports) + 2*panelOverhead
 	if docker {
@@ -107,7 +109,9 @@ func (m Model) serverBodyColumns(server collect.Metrics, width, budget int, unit
 	portsHeight, truncated := 0, true
 	if rowHeight >= 2*minPanelHeight {
 		portsHeight = min(len(ports)+panelOverhead, rowHeight-minPanelHeight)
-		truncated = false
+		// Список не влез по высоте — в заголовке плитки останется полное число
+		// портов, поэтому неполноту показываем признаком усечения, а не молча.
+		truncated = portsHeight-panelOverhead < len(ports)
 	}
 	servicesHeight := rowHeight - portsHeight
 
@@ -129,9 +133,10 @@ func (m Model) serverBodyColumns(server collect.Metrics, width, budget int, unit
 
 // serverBodyStacked — та же тройка в одну колонку: на 80 колонках DOCKER,
 // СЕРВИСЫ и ПОРТЫ встают друг под друга, состав экрана при этом тот же.
-func (m Model) serverBodyStacked(server collect.Metrics, width, budget int, units, ports []string) ([]string, bool) {
+func (m Model) serverBodyStacked(server collect.Metrics, width, budget int, units []string) ([]string, bool) {
 	docker := m.dashboardHasDocker()
 	dockerRows := m.dashboardDockerContent(width - 4)
+	ports := serverPortLines(server, width-4)
 
 	// Каждая плитка получает желаемую высоту, но не за счёт чужого минимума:
 	// иначе длинный список юнитов съедал бы ряд целиком. Первый резерв —
@@ -157,6 +162,8 @@ func (m Model) serverBodyStacked(server collect.Metrics, width, budget int, unit
 	portsHeight := min(len(ports)+panelOverhead, free)
 	if portsHeight < minPanelHeight {
 		portsHeight, truncated = 0, true
+	} else if portsHeight-panelOverhead < len(ports) {
+		truncated = true
 	}
 	free -= portsHeight
 
@@ -312,13 +319,80 @@ func serverFacts(server collect.Metrics, address string) string {
 	return strings.Join(facts, " · ")
 }
 
-func serverPortLines(server collect.Metrics) []string {
+// serverPortLines — записи портов, разложенные по ширине плитки. Одна колонка
+// коротких «0.0.0.0:33364» оставляла бы четыре пятых панели пустыми, а список
+// при этом обрезался по высоте.
+func serverPortLines(server collect.Metrics, width int) []string {
 	if len(server.Ports) == 0 {
 		return []string{dimStyle.Render("портов нет")}
 	}
-	rows := make([]string, 0, len(server.Ports))
+	// Адреса выравниваются между собой, чтобы номера портов читались столбиком;
+	// потолок в portLocalWidth не даёт длинному IPv6 растянуть все колонки.
+	local := 0
 	for _, port := range server.Ports {
-		rows = append(rows, fmt.Sprintf("%-22s %s", truncateCells(port.Local, 22), port.Process))
+		local = max(local, lipgloss.Width(port.Local))
 	}
-	return rows
+	local = min(local, portLocalWidth)
+	entries := make([]string, 0, len(server.Ports))
+	for _, port := range server.Ports {
+		entry := truncateCells(port.Local, local)
+		if port.Process != "" {
+			entry = padCell(entry, local) + " " + port.Process
+		}
+		entries = append(entries, entry)
+	}
+	return portColumns(entries, width)
+}
+
+const (
+	// portLocalWidth — потолок колонки адреса, прежняя ширина одноколоночного
+	// списка.
+	portLocalWidth = 22
+	// portColumnGap — зазор между колонками портов: тот же, что между плитками.
+	portColumnGap = 2
+)
+
+// portColumns раскладывает записи по колонкам с чтением сверху вниз, как `ls`:
+// в списке адресов глаз идёт по колонке, а не прыгает по строке. Число колонок
+// считается от фактической ширины и самой длинной записи, поэтому на узкой
+// плитке остаётся одна колонка.
+func portColumns(entries []string, width int) []string {
+	if len(entries) == 0 {
+		return nil
+	}
+	cell := 1
+	for _, entry := range entries {
+		cell = max(cell, lipgloss.Width(entry))
+	}
+	columns := 1
+	if width > 0 {
+		columns = max(1, (width+portColumnGap)/(cell+portColumnGap))
+	}
+	columns = min(columns, len(entries))
+	rows := (len(entries) + columns - 1) / columns
+	// Пересчёт под фактическое число строк: 5 записей в 4 колонки укладываются
+	// в 2 строки, но занимают только 3 колонки — четвёртая осталась бы пустой.
+	columns = (len(entries) + rows - 1) / rows
+
+	out := make([]string, 0, rows)
+	for row := range rows {
+		line := strings.Builder{}
+		for column := range columns {
+			index := column*rows + row
+			if index >= len(entries) {
+				break
+			}
+			if column > 0 {
+				line.WriteString(strings.Repeat(" ", portColumnGap))
+			}
+			// Хвост строки не добиваем: рамка плитки дополнит его сама.
+			if index+rows < len(entries) {
+				line.WriteString(padCell(entries[index], cell))
+				continue
+			}
+			line.WriteString(entries[index])
+		}
+		out = append(out, line.String())
+	}
+	return out
 }

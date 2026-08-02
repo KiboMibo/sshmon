@@ -171,9 +171,9 @@ func TestServerScreenKeepsPortsOnTightBudget(t *testing.T) {
 	for _, height := range []int{18, 19, 20} {
 		view := serverScreenModel(100, height).View()
 
-		// Тогда: плитка ПОРТЫ на месте и признака усечения нет.
-		if !strings.Contains(view, "ПОРТЫ") || strings.Contains(view, "усечено") {
-			t.Fatalf("100×%d: ПОРТЫ не поместились:\n%s", height, view)
+		// Тогда: плитка ПОРТЫ на месте.
+		if !strings.Contains(view, "ПОРТЫ") {
+			t.Fatalf("100×%d: плитка ПОРТЫ пропала:\n%s", height, view)
 		}
 		// Тогда: логи не ужаты ниже своего минимума — заголовок и строка лога на месте.
 		if !strings.Contains(view, "ЛОГИ") || !strings.Contains(view, "system ready") {
@@ -247,5 +247,118 @@ func TestServerScreenShowsIssueAndKeepsLastMetricsWhenOffline(t *testing.T) {
 	}
 	if strings.Contains(view, "сервер недоступен: database locked") {
 		t.Fatalf("ошибка истории подана как отказ сервера:\n%s", view)
+	}
+}
+
+// portsFixture — n записей вида «0.0.0.0:33000» без имени процесса: ровно то,
+// что видно на реальном хосте, где ss запущен без прав на владельца сокета.
+func portsFixture(n int) collect.Metrics {
+	server := collect.Metrics{}
+	for index := range n {
+		server.Ports = append(server.Ports, collect.Port{Proto: "tcp", Local: fmt.Sprintf("0.0.0.0:%d", 33000+index)})
+	}
+	return server
+}
+
+// TestServerPortsFillPanelWidthInColumns — Дано: 20 коротких портов; Когда:
+// список строится под ширину плитки 56/96/196; Тогда: он занимает ширину
+// колонками, а не висит одним столбцом, и читается сверху вниз.
+func TestServerPortsFillPanelWidthInColumns(t *testing.T) {
+	server := portsFixture(20)
+	for _, tc := range []struct {
+		width, rows int
+	}{{width: 56, rows: 7}, {width: 96, rows: 4}, {width: 196, rows: 2}} {
+		rows := serverPortLines(server, tc.width)
+
+		if len(rows) != tc.rows {
+			t.Fatalf("ширина %d: %d строк, ожидалось %d:\n%s", tc.width, len(rows), tc.rows, strings.Join(rows, "\n"))
+		}
+		for index, row := range rows {
+			if got := lipgloss.Width(row); got > tc.width {
+				t.Fatalf("ширина %d: строка %d шириной %d: %q", tc.width, index, got, row)
+			}
+		}
+		// Тогда: ни одна запись не потерялась.
+		for _, port := range server.Ports {
+			if !strings.Contains(strings.Join(rows, "\n"), port.Local) {
+				t.Fatalf("ширина %d: пропал порт %s:\n%s", tc.width, port.Local, strings.Join(rows, "\n"))
+			}
+		}
+		// Тогда: порядок чтения — сверху вниз по колонкам, как у `ls`.
+		for index, row := range rows {
+			if !strings.HasPrefix(row, server.Ports[index].Local) {
+				t.Fatalf("ширина %d: строка %d начинается не с %s: %q", tc.width, index, server.Ports[index].Local, row)
+			}
+		}
+		// Тогда: вторая колонка начинается там, где кончилась первая.
+		if !strings.Contains(rows[0], server.Ports[tc.rows].Local) {
+			t.Fatalf("ширина %d: во второй колонке не %s: %q", tc.width, server.Ports[tc.rows].Local, rows[0])
+		}
+	}
+}
+
+// TestServerPortsStayOneColumnOnNarrowPanel — Дано: узкая плитка и длинные
+// записи; Когда: список построен; Тогда: колонка одна, как было раньше.
+func TestServerPortsStayOneColumnOnNarrowPanel(t *testing.T) {
+	server := collect.Metrics{Ports: []collect.Port{
+		{Local: "10.2.96.202:27017"}, {Local: "10.2.96.202:27018"}, {Local: "10.2.96.202:27019"},
+	}}
+
+	rows := serverPortLines(server, 20)
+
+	if len(rows) != len(server.Ports) {
+		t.Fatalf("ожидалась одна колонка, получено %d строк:\n%s", len(rows), strings.Join(rows, "\n"))
+	}
+}
+
+// TestServerPortColumnsAlignInCells — Дано: имена процессов кириллицей, вдвое
+// более длинные в байтах, чем на экране; Когда: список разложен по колонкам;
+// Тогда: колонки выровнены по ячейкам терминала, а не по байтам.
+func TestServerPortColumnsAlignInCells(t *testing.T) {
+	server := collect.Metrics{Ports: []collect.Port{
+		{Local: "0.0.0.0:80", Process: "нжинкс"},
+		{Local: "0.0.0.0:443", Process: "апач"},
+		{Local: "127.0.0.1:5432", Process: "постгрес"},
+		{Local: "127.0.0.1:6379", Process: "редис"},
+	}}
+
+	rows := serverPortLines(server, 80)
+
+	if len(rows) != 2 {
+		t.Fatalf("ожидались две строки, получено %d:\n%s", len(rows), strings.Join(rows, "\n"))
+	}
+	offsets := make([]int, 0, len(rows))
+	for index, row := range rows {
+		if lipgloss.Width(row) > 80 {
+			t.Fatalf("строка %d шире плитки: %q", index, row)
+		}
+		start := strings.Index(row, server.Ports[index+len(rows)].Local)
+		if start < 0 {
+			t.Fatalf("строка %d без второй колонки: %q", index, row)
+		}
+		offsets = append(offsets, lipgloss.Width(row[:start]))
+	}
+	if offsets[0] != offsets[1] {
+		t.Fatalf("вторая колонка съехала: %d против %d:\n%s", offsets[0], offsets[1], strings.Join(rows, "\n"))
+	}
+}
+
+// TestServerPortsTruncationIsMarked — Дано: портов больше, чем строк в плитке;
+// Когда: экран собран; Тогда: неполнота списка видна признаком усечения.
+func TestServerPortsTruncationIsMarked(t *testing.T) {
+	m := serverScreenModel(120, 30)
+	m.snapshot.Servers[0].Ports = portsFixture(400).Ports
+
+	view := m.View()
+
+	if !strings.Contains(view, "ПОРТЫ 400") {
+		t.Fatalf("экран без плитки портов:\n%s", view)
+	}
+	if !strings.Contains(view, "усечено") {
+		t.Fatalf("срезанный список портов не помечен усечением:\n%s", view)
+	}
+	// И: когда список помещается целиком, признака усечения нет.
+	if view := serverScreenModel(120, 30).View(); strings.Contains(view, "усечено") {
+		t.Fatalf("лишний признак усечения:\n%s", view)
 	}
 }
