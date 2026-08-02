@@ -14,16 +14,35 @@ func TestGaugeClampsPercentageAndKeepsExactWidth(t *testing.T) {
 		value float64
 		want  string
 	}{
-		{value: -10, want: "░░░░░░░░░░"},
-		{value: 50, want: "█████░░░░░"},
-		{value: 150, want: "██████████"},
+		{value: -10, want: "[░░░░░░░░]"},
+		{value: 50, want: "[████░░░░]"},
+		{value: 150, want: "[████████]"},
 	} {
 		// When: a ten-cell gauge is rendered.
 		got := gauge(tc.value, 10)
 
-		// Then: it is clamped and occupies exactly ten terminal cells.
+		// Then: it is clamped, framed and occupies exactly ten terminal cells.
 		if got != tc.want || lipgloss.Width(got) != 10 {
 			t.Fatalf("gauge(%v, 10) = %q (width %d), want %q", tc.value, got, lipgloss.Width(got), tc.want)
+		}
+	}
+}
+
+func TestGaugeFrameSurvivesTinyWidths(t *testing.T) {
+	// Дано: ширины вокруг порога обрамления и ниже него.
+	for width := range gaugeFramedMin + 2 {
+		// Когда: бар рисуется в эту ширину.
+		got := gauge(50, width)
+
+		// Тогда: ячеек ровно столько, сколько просили, и скобки не съели шкалу.
+		if lipgloss.Width(got) != width {
+			t.Fatalf("gauge(50, %d) = %q, ширина %d", width, got, lipgloss.Width(got))
+		}
+		if width >= gaugeFramedMin && !strings.HasPrefix(got, "[") {
+			t.Fatalf("бар без рамки на ширине %d: %q", width, got)
+		}
+		if width > 0 && width < gaugeFramedMin && strings.ContainsAny(got, "[]") {
+			t.Fatalf("рамка съела узкую шкалу на ширине %d: %q", width, got)
 		}
 	}
 }

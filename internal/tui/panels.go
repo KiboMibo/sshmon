@@ -8,10 +8,25 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// gaugeFramedMin — с этой ширины бар берётся в скобки. Ниже неё рамка съела бы
+// треть шкалы, и «мало» стало бы неотличимо от «много».
+const gaugeFramedMin = 6
+
+// gauge рисует шкалу ровно в width ячеек. Скобки по краям — не украшение:
+// три бара подряд (cpu/mem/disk в карточке хоста) без них сливались в один
+// прямоугольник. Рамка входит в width, поэтому колонка тренда в сетке метрик
+// и карточка остаются выровненными.
 func gauge(value float64, width int) string {
 	if width < 1 {
 		return ""
 	}
+	if width < gaugeFramedMin {
+		return gaugeScale(value, width)
+	}
+	return "[" + gaugeScale(value, width-2) + "]"
+}
+
+func gaugeScale(value float64, width int) string {
 	// Кламп по числу ячеек, а не по проценту: NaN на входе даёт непредсказуемый
 	// int, и strings.Repeat с отрицательным счётчиком уронил бы рендер.
 	filled := max(0, min(width, int(math.Round(value*float64(width)/100))))
@@ -133,7 +148,10 @@ func metricPercentCell(percent float64) string {
 }
 
 func percentLine(label string, value float64, width int) string {
-	barWidth := max(6, min(20, width-len(label)-8))
+	// Ширина бара от метки не зависит: метка стоит в своей колонке в семь
+	// ячеек. От len(label) бар «disk» был на ячейку короче «cpu» и «mem», и
+	// три обрамлённых бара подряд заканчивались лесенкой.
+	barWidth := max(6, min(20, width-11))
 	return fmt.Sprintf("%-7s %s %3.0f%%", label, gauge(value, barWidth), value)
 }
 
