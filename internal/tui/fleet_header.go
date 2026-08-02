@@ -139,7 +139,7 @@ func (m Model) fleetGroupBox(width int) []string {
 
 func (m Model) fleetHeader(width int) string {
 	counts := countStates(m.snapshot.Servers, m.snapshot.Issues)
-	left := fmt.Sprintf("%s  %d хостов   %s", titleStyle.Render("FLEET"), counts.total(), stateSummary(counts))
+	left := fmt.Sprintf("%s  %s   %s", titleStyle.Render("FLEET"), hostsText(counts.total()), stateSummary(counts))
 	return spread(left, dimStyle.Render(m.pollHint()), width)
 }
 
@@ -181,7 +181,7 @@ func (m Model) fleetContextLine(visible, groupTotal, width int) string {
 	if scope == "" {
 		scope = "всё"
 	}
-	left := fmt.Sprintf("%s · %d хостов", titleStyle.Render(scope), groupTotal)
+	left := fmt.Sprintf("%s · %s", titleStyle.Render(scope), hostsText(groupTotal))
 	if query := m.fleet.filter.Query; query != "" || m.fleet.searching {
 		left += "   поиск > " + query
 		if m.fleet.searching {

@@ -136,7 +136,7 @@ func (m Model) fleetLogboxCount() string {
 	total := m.logs.buffer.Total()
 	hint := groupDigits(len(m.logs.visibleLines())) + " из " + groupDigits(total)
 	if fresh := total - m.fleet.logboxSeen; fresh > 0 {
-		hint = groupDigits(fresh) + " новых · " + hint
+		hint = groupDigits(fresh) + " " + plural(fresh, "новая", "новых", "новых") + " · " + hint
 	}
 	return hint
 }

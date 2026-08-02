@@ -300,7 +300,7 @@ func TestFleetLogboxCountsLinesArrivedSinceLastLook(t *testing.T) {
 		t.Fatalf("hint after end = %q", hint)
 	}
 	seen.logs.buffer.Append("info one more")
-	if hint := seen.fleetLogboxCount(); hint != "1 новых · 4 из 4" {
+	if hint := seen.fleetLogboxCount(); hint != "1 новая · 4 из 4" {
 		t.Fatalf("hint after a fresh line = %q", hint)
 	}
 }

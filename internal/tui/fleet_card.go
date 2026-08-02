@@ -21,7 +21,7 @@ func fleetCardSummary(server collect.Metrics) string {
 		parts = append(parts, server.Hostname)
 	}
 	if server.NumCPU > 0 {
-		parts = append(parts, fmt.Sprintf("%d ядер", server.NumCPU))
+		parts = append(parts, coresText(server.NumCPU))
 	}
 	if server.MemTotalKB > 0 {
 		parts = append(parts, byteValue(float64(server.MemTotalKB)*1024))
@@ -122,7 +122,7 @@ func (m Model) dockerText(server collect.Metrics) string {
 		parts = append(parts, dimStyle.Render(fmt.Sprintf("○ %d остановлено", d.Stopped)))
 	}
 	if d.Broken > 0 {
-		parts = append(parts, warnStyle.Render(fmt.Sprintf("⚠ %d проблемных", d.Broken)))
+		parts = append(parts, warnStyle.Render(fmt.Sprintf("⚠ %d %s", d.Broken, plural(d.Broken, "проблемный", "проблемных", "проблемных"))))
 	}
 	return strings.Join(parts, "  ")
 }
@@ -207,7 +207,7 @@ func containerCounts(items []collect.Container) string {
 		parts = append(parts, dimStyle.Render(fmt.Sprintf("○ %d остановлено", exited)))
 	}
 	if other > 0 {
-		parts = append(parts, warnStyle.Render(fmt.Sprintf("⚠ %d проблемных", other)))
+		parts = append(parts, warnStyle.Render(fmt.Sprintf("⚠ %d %s", other, plural(other, "проблемный", "проблемных", "проблемных"))))
 	}
 	return strings.Join(parts, "  ")
 }

@@ -218,6 +218,36 @@ func TestMetricRowKeepsStyledDetailsIntact(t *testing.T) {
 	assertCompleteEscapes(t, row)
 }
 
+// TestPluralPicksRussianForm — Дано: числа на всех границах склонения;
+// Когда: выбирается форма счётного существительного; Тогда: 1 ядро, 2–4 ядра,
+// 5+ ядер, а 11–14 остаются «ядер» вопреки последней цифре.
+func TestPluralPicksRussianForm(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		count int
+		want  string
+	}{
+		{count: 0, want: "ядер"}, {count: 1, want: "ядро"}, {count: 2, want: "ядра"},
+		{count: 4, want: "ядра"}, {count: 5, want: "ядер"}, {count: 11, want: "ядер"},
+		{count: 14, want: "ядер"}, {count: 21, want: "ядро"}, {count: 22, want: "ядра"},
+		{count: 25, want: "ядер"}, {count: 101, want: "ядро"}, {count: 111, want: "ядер"},
+	} {
+		if got := plural(tc.count, "ядро", "ядра", "ядер"); got != tc.want {
+			t.Fatalf("plural(%d) = %q, ожидалось %q", tc.count, got, tc.want)
+		}
+	}
+	// И: готовые счётчики склеивают число с формой без пробельных сюрпризов.
+	for _, tc := range []struct{ got, want string }{
+		{got: coresText(1), want: "1 ядро"}, {got: coresText(2), want: "2 ядра"},
+		{got: coresText(12), want: "12 ядер"}, {got: hostsText(1), want: "1 хост"},
+		{got: hostsText(3), want: "3 хоста"}, {got: hostsText(26), want: "26 хостов"},
+	} {
+		if tc.got != tc.want {
+			t.Fatalf("счётчик %q, ожидалось %q", tc.got, tc.want)
+		}
+	}
+}
+
 // runeIndexOf возвращает позицию подстроки в ячейках, а не в байтах:
 // глифы спарклайна многобайтовые, байтовый индекс о выравнивании не говорит.
 func runeIndexOf(value, substring string) int {

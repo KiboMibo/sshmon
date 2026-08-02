@@ -137,6 +137,36 @@ func percentLine(label string, value float64, width int) string {
 	return fmt.Sprintf("%-7s %s %3.0f%%", label, gauge(value, barWidth), value)
 }
 
+// plural выбирает форму русского счётного существительного: 1 ядро, 2 ядра,
+// 5 ядер. Отдельная ветка на 11–14 — они склоняются как «много» («11 ядер»,
+// «14 ядер»), хотя и оканчиваются на 1–4.
+func plural(count int, one, few, many string) string {
+	if count < 0 {
+		count = -count
+	}
+	switch {
+	case count%100 >= 11 && count%100 <= 14:
+		return many
+	case count%10 == 1:
+		return one
+	case count%10 >= 2 && count%10 <= 4:
+		return few
+	default:
+		return many
+	}
+}
+
+// coresText — «2 ядра» в шапке экрана сервера и в карточке флота: один и тот
+// же факт в двух местах должен и склоняться одинаково.
+func coresText(count int) string {
+	return fmt.Sprintf("%d %s", count, plural(count, "ядро", "ядра", "ядер"))
+}
+
+// hostsText — «26 хостов» в шапке флота и в строке области видимости.
+func hostsText(count int) string {
+	return fmt.Sprintf("%d %s", count, plural(count, "хост", "хоста", "хостов"))
+}
+
 func byteValue(value float64) string {
 	units := []string{"B", "K", "M", "G", "T"}
 	unit := 0

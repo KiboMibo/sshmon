@@ -114,7 +114,7 @@ func TestServerHeaderCarriesFactsAndFleetWording(t *testing.T) {
 	header := m.serverHeader(m.snapshot.Servers[0], 120)
 
 	// Then: состояние названо как на флоте, а факты — по макету.
-	for _, want := range []string{"● норма", "web-01", "debian 12", "4 ядер", "up 140д"} {
+	for _, want := range []string{"● норма", "web-01", "debian 12", "4 ядра", "up 140д"} {
 		if !strings.Contains(header, want) {
 			t.Fatalf("шапка без %q: %q", want, header)
 		}

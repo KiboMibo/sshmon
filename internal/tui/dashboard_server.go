@@ -287,7 +287,7 @@ func serverFacts(server collect.Metrics, address string) string {
 		}
 	}
 	if server.NumCPU > 0 {
-		facts = append(facts, fmt.Sprintf("%d ядер", server.NumCPU))
+		facts = append(facts, coresText(server.NumCPU))
 	}
 	if server.MemTotalKB > 0 {
 		facts = append(facts, byteValue(float64(server.MemTotalKB)*1024))
