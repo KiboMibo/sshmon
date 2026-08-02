@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -13,16 +14,35 @@ func TestGaugeClampsPercentageAndKeepsExactWidth(t *testing.T) {
 		value float64
 		want  string
 	}{
-		{value: -10, want: "░░░░░░░░░░"},
-		{value: 50, want: "█████░░░░░"},
-		{value: 150, want: "██████████"},
+		{value: -10, want: "[········]"},
+		{value: 50, want: "[████····]"},
+		{value: 150, want: "[████████]"},
 	} {
 		// When: a ten-cell gauge is rendered.
 		got := gauge(tc.value, 10)
 
-		// Then: it is clamped and occupies exactly ten terminal cells.
+		// Then: it is clamped, framed and occupies exactly ten terminal cells.
 		if got != tc.want || lipgloss.Width(got) != 10 {
 			t.Fatalf("gauge(%v, 10) = %q (width %d), want %q", tc.value, got, lipgloss.Width(got), tc.want)
+		}
+	}
+}
+
+func TestGaugeFrameSurvivesTinyWidths(t *testing.T) {
+	// Дано: ширины вокруг порога обрамления и ниже него.
+	for width := range gaugeFramedMin + 2 {
+		// Когда: бар рисуется в эту ширину.
+		got := gauge(50, width)
+
+		// Тогда: ячеек ровно столько, сколько просили, и скобки не съели шкалу.
+		if lipgloss.Width(got) != width {
+			t.Fatalf("gauge(50, %d) = %q, ширина %d", width, got, lipgloss.Width(got))
+		}
+		if width >= gaugeFramedMin && !strings.HasPrefix(got, "[") {
+			t.Fatalf("бар без рамки на ширине %d: %q", width, got)
+		}
+		if width > 0 && width < gaugeFramedMin && strings.ContainsAny(got, "[]") {
+			t.Fatalf("рамка съела узкую шкалу на ширине %d: %q", width, got)
 		}
 	}
 }
@@ -52,5 +72,257 @@ func TestHistorySparklineUsesPlaceholderForEmptySeries(t *testing.T) {
 	// Then: a stable placeholder occupies the requested width.
 	if got != "─────" {
 		t.Fatalf("empty history sparkline = %q, want %q", got, "─────")
+	}
+}
+
+func TestHistorySparklineNormalisesNonPercentSeries(t *testing.T) {
+	// Дано: байты/с — значения далеко за пределами процентной шкалы.
+	low, mid, high := 8000.0, 12000.0, 16000.0
+	values := []*float64{&low, &mid, &high}
+
+	// Когда: серия рисуется в три ячейки.
+	got := historySparkline(values, 3)
+
+	// Тогда: виден тренд, а не сплошная заливка «█».
+	glyphs := []rune(got)
+	if len(glyphs) != 3 {
+		t.Fatalf("sparkline = %q, want 3 glyphs", got)
+	}
+	if glyphs[0] == glyphs[2] {
+		t.Fatalf("sparkline is flat for a rising byte series: %q", got)
+	}
+	if glyphs[0] != '▁' || glyphs[2] != '█' {
+		t.Fatalf("sparkline = %q, want min glyph first and max glyph last", got)
+	}
+}
+
+func TestHistorySparklineDrawsFlatSeriesAtBaseline(t *testing.T) {
+	// Дано: серия без разброса.
+	value := 42.0
+	values := []*float64{&value, &value, &value}
+
+	// Когда: она рисуется.
+	got := historySparkline(values, 3)
+
+	// Тогда: ровная линия по нижнему глифу — у серии нет тренда.
+	if got != "▁▁▁" {
+		t.Fatalf("flat sparkline = %q, want %q", got, "▁▁▁")
+	}
+}
+
+func TestFitLineDoesNotBreakAnsiSequences(t *testing.T) {
+	// Дано: строка, у которой стиль открыт в начале, а сброс — в самом конце.
+	// Escape-коды заданы литералами: под go test lipgloss отдаёт Ascii-профиль
+	// и Render() не вставил бы последовательностей вовсе.
+	styled := "\x1b[2m" + strings.Repeat("длинный футер ", 8) + "\x1b[0m"
+
+	// Когда: она обрезается до 20 ячеек.
+	got := fitLine(styled, 20)
+
+	// Тогда: ширина соблюдена, escape-коды целы, стиль закрыт.
+	if lipgloss.Width(got) > 20 {
+		t.Fatalf("fitLine width = %d, want <= 20: %q", lipgloss.Width(got), got)
+	}
+	assertCompleteEscapes(t, got)
+	if !strings.HasSuffix(got, "\x1b[0m") {
+		t.Fatalf("fitLine left the style open: %q", got)
+	}
+}
+
+func TestFitLineCutsInsideHighlightWithoutSplittingEscape(t *testing.T) {
+	// Дано: подсветка совпадения начинается ровно у границы обрезки.
+	line := strings.Repeat("a", 18) + "\x1b[33mсовпадение\x1b[0m" + "хвост"
+
+	// Когда: строка обрезается до 20 ячеек.
+	got := fitLine(line, 20)
+
+	// Тогда: обрезка не оставила «голый» \x1b[ и закрыла стиль.
+	if lipgloss.Width(got) > 20 {
+		t.Fatalf("fitLine width = %d, want <= 20: %q", lipgloss.Width(got), got)
+	}
+	assertCompleteEscapes(t, got)
+	if !strings.HasSuffix(got, "\x1b[0m") {
+		t.Fatalf("fitLine left the highlight style open: %q", got)
+	}
+}
+
+// assertCompleteEscapes проверяет, что каждая ESC-последовательность в строке
+// дописана до финального байта — обрыв внутри неё съедает следующие байты кадра.
+func assertCompleteEscapes(t *testing.T, value string) {
+	t.Helper()
+	for index := 0; index < len(value); index++ {
+		if value[index] != 0x1b {
+			continue
+		}
+		rest := value[index+1:]
+		if !strings.HasPrefix(rest, "[") {
+			t.Fatalf("escape-последовательность обрезана в %q", value)
+		}
+		if strings.IndexFunc(rest[1:], func(r rune) bool { return r >= 0x40 && r <= 0x7e }) < 0 {
+			t.Fatalf("незавершённая CSI в %q", value)
+		}
+	}
+}
+
+func TestMetricRowAlignsColumnsAtBoundaryWidths(t *testing.T) {
+	// Дано: две строки сетки с разными метками и деталями.
+	value := 10.0
+	series := []*float64{&value}
+	for _, width := range []int{60, 100} {
+		cpu := metricRow("CPU", func(w int) string { return historySparkline(series, w) }, 5, "ДЕТАЛИcpu", width)
+		mem := metricRow("ПАМЯТЬ", func(w int) string { return gauge(50, w) }, 50, "ДЕТАЛИmem", width)
+
+		// Когда/тогда: обе укладываются в ширину и делят одну левую границу деталей.
+		for _, row := range []string{cpu, mem} {
+			if lipgloss.Width(row) > width {
+				t.Fatalf("metricRow width = %d, want <= %d: %q", lipgloss.Width(row), width, row)
+			}
+		}
+		if got, want := runeIndexOf(cpu, "ДЕТАЛИcpu"), runeIndexOf(mem, "ДЕТАЛИmem"); got != want || got < 0 {
+			t.Fatalf("details columns differ at width %d: %d vs %d (%q / %q)", width, got, want, cpu, mem)
+		}
+	}
+}
+
+func TestMetricRowRendersPlaceholderAndFullPercent(t *testing.T) {
+	// Дано: тренда у строки нет вовсе и загрузка выше 99%.
+	row := metricRow("ДИСК", nil, 100, "", 60)
+
+	// Тогда: колонка тренда пуста (мёртвой черты нет), а процент не расползся.
+	if strings.ContainsAny(row, "─█░▁") {
+		t.Fatalf("колонка тренда без тренда должна быть пустой: %q", row)
+	}
+	if !strings.Contains(row, "100%") {
+		t.Fatalf("metricRow lost the percent column: %q", row)
+	}
+	if lipgloss.Width(row) > 60 {
+		t.Fatalf("metricRow width = %d, want <= 60: %q", lipgloss.Width(row), row)
+	}
+	// И: NaN (пустой /proc, раздел нулевого размера) не печатается: «NaN%» на
+	// ячейку шире «100%» сдвинул бы всю сетку.
+	nan := metricRow("ДИСК", nil, math.NaN(), "", 60)
+	if strings.Contains(nan, "NaN") || lipgloss.Width(nan) != lipgloss.Width(row) {
+		t.Fatalf("NaN просочился в колонку процента: %q", nan)
+	}
+}
+
+func TestMetricRowLeavesPercentColumnEmptyWithoutScale(t *testing.T) {
+	// Дано: у NET процента нет (байты/с), у CPU — есть.
+	value := 10.0
+	series := []*float64{&value}
+	net := metricRow("NET", nil, metricNoPercent, "rx 1.2M/s", 80)
+	cpu := metricRow("CPU", func(w int) string { return historySparkline(series, w) }, 16, "load 1.19", 80)
+
+	// Тогда: колонка процента у NET пустая, но ширину держит — детали обеих
+	// строк начинаются в одной колонке.
+	if strings.Contains(net, "%") {
+		t.Fatalf("у строки без шкалы не должно быть процента: %q", net)
+	}
+	if got, want := runeIndexOf(net, "rx"), runeIndexOf(cpu, "load"); got != want || got < 0 {
+		t.Fatalf("детали разъехались: %d vs %d (%q / %q)", got, want, net, cpu)
+	}
+}
+
+func TestMetricRowKeepsStyledDetailsIntact(t *testing.T) {
+	// Дано: детали приходят цветными, а ширины на них не хватает.
+	details := "\x1b[2mload 1.19 0.98 0.71\x1b[0m"
+
+	// Когда: строка сетки рисуется в узкий терминал.
+	row := metricRow("CPU", nil, 16, details, 60)
+
+	// Тогда: ширина соблюдена, а ANSI-последовательности целы.
+	if lipgloss.Width(row) > 60 {
+		t.Fatalf("metricRow width = %d, want <= 60: %q", lipgloss.Width(row), row)
+	}
+	assertCompleteEscapes(t, row)
+}
+
+// TestPluralPicksRussianForm — Дано: числа на всех границах склонения;
+// Когда: выбирается форма счётного существительного; Тогда: 1 ядро, 2–4 ядра,
+// 5+ ядер, а 11–14 остаются «ядер» вопреки последней цифре.
+func TestPluralPicksRussianForm(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		count int
+		want  string
+	}{
+		{count: 0, want: "ядер"}, {count: 1, want: "ядро"}, {count: 2, want: "ядра"},
+		{count: 4, want: "ядра"}, {count: 5, want: "ядер"}, {count: 11, want: "ядер"},
+		{count: 14, want: "ядер"}, {count: 21, want: "ядро"}, {count: 22, want: "ядра"},
+		{count: 25, want: "ядер"}, {count: 101, want: "ядро"}, {count: 111, want: "ядер"},
+	} {
+		if got := plural(tc.count, "ядро", "ядра", "ядер"); got != tc.want {
+			t.Fatalf("plural(%d) = %q, ожидалось %q", tc.count, got, tc.want)
+		}
+	}
+	// И: готовые счётчики склеивают число с формой без пробельных сюрпризов.
+	for _, tc := range []struct{ got, want string }{
+		{got: coresText(1), want: "1 ядро"}, {got: coresText(2), want: "2 ядра"},
+		{got: coresText(12), want: "12 ядер"}, {got: hostsText(1), want: "1 хост"},
+		{got: hostsText(3), want: "3 хоста"}, {got: hostsText(26), want: "26 хостов"},
+	} {
+		if tc.got != tc.want {
+			t.Fatalf("счётчик %q, ожидалось %q", tc.got, tc.want)
+		}
+	}
+}
+
+// runeIndexOf возвращает позицию подстроки в ячейках, а не в байтах:
+// глифы спарклайна многобайтовые, байтовый индекс о выравнивании не говорит.
+func runeIndexOf(value, substring string) int {
+	index := strings.Index(value, substring)
+	if index < 0 {
+		return -1
+	}
+	return len([]rune(value[:index]))
+}
+
+// TestGaugeSeparatesFillFromTrack — Дано: три бара подряд, как в карточке
+// хоста; Когда: они отрисованы; Тогда: заливка и дорожка разной фактуры (без
+// сплошной «░», в которой три строки сливались в один прямоугольник), сами
+// строки различимы, а цвет заливки берёт те же пороги, что и процент рядом.
+func TestGaugeSeparatesFillFromTrack(t *testing.T) {
+	rows := make([]string, 0, 3)
+	for _, value := range []float64{6, 41, 78} {
+		rows = append(rows, gauge(value, 20))
+	}
+	for _, row := range rows {
+		if strings.Contains(row, "░") {
+			t.Fatalf("незаполненная часть осталась сплошной заливкой: %q", row)
+		}
+		if !strings.Contains(row, gaugeFilled) || !strings.Contains(row, gaugeEmpty) {
+			t.Fatalf("бар потерял одну из двух фактур: %q", row)
+		}
+		if lipgloss.Width(row) != 20 {
+			t.Fatalf("ширина бара = %d, ожидалось 20: %q", lipgloss.Width(row), row)
+		}
+	}
+	for index := 1; index < len(rows); index++ {
+		if rows[index] == rows[index-1] {
+			t.Fatalf("соседние бары неразличимы: %q", rows[index])
+		}
+		if strings.Count(rows[index], gaugeFilled) <= strings.Count(rows[index-1], gaugeFilled) {
+			t.Fatalf("заливка не растёт вместе со значением: %q после %q", rows[index], rows[index-1])
+		}
+	}
+
+	// И: пороги подсветки одни на бар и на число — вторых порогов нет.
+	for _, tc := range []struct {
+		value float64
+		alert bool
+		style lipgloss.Style
+	}{
+		{74.9, false, goodStyle},
+		{75, true, warnStyle},
+		{89.9, true, warnStyle},
+		{90, true, criticalStyle},
+	} {
+		style, alert := percentSeverity(tc.value)
+		if alert != tc.alert {
+			t.Fatalf("percentSeverity(%v): alert = %v, ожидалось %v", tc.value, alert, tc.alert)
+		}
+		if alert && style.GetForeground() != tc.style.GetForeground() {
+			t.Fatalf("percentSeverity(%v): цвет %v, ожидался %v", tc.value, style.GetForeground(), tc.style.GetForeground())
+		}
 	}
 }

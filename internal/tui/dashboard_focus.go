@@ -8,12 +8,13 @@ import (
 	"github.com/kibomibo/sshmon/internal/collect"
 )
 
-// Плитки дашборда в порядке обхода фокуса (h/l/tab), как в lazydocker.
+// Плитки дашборда в порядке обхода фокуса (tab/shift+tab), как в lazydocker.
+// В списке только плитки с рамкой: сетка метрик и сеть рисуются строками
+// экрана, подсвечивать в них фокус нечего, а шаг фокуса «в никуда» сбивает.
 const (
-	tileMetrics uint8 = iota
-	tileSystemd
-	tileNetwork
+	tileSystemd uint8 = iota
 	tileDocker
+	tilePorts
 	tileLogs
 	numDashboardTiles
 )
@@ -41,7 +42,9 @@ func (m Model) tileBorderStyle(idx uint8) lipgloss.Style {
 }
 
 // handleDashboardFocusKey обрабатывает навигацию lazydocker-стиля, когда
-// фильтр юнитов не активен: h/l/tab переключают плитки, j/k скроллят внутри.
+// фильтр юнитов не активен: tab/shift+tab переключают плитки, j/k скроллят
+// внутри. h/l/x/r сюда не попадают: они отданы общей раскладке (история,
+// логи, ssh, обновить).
 func (m *Model) handleDashboardFocusKey(value string) (tea.Cmd, bool) {
 	switch value {
 	case "tab":
@@ -63,7 +66,7 @@ func (m *Model) handleDashboardFocusKey(value string) (tea.Cmd, bool) {
 			return textinput.Blink, true
 		}
 		return nil, true
-	case "x":
+	case "s":
 		m.dashboard.tileScrolls[tileLogs] = 0
 		m.dashboard.unitUI.input.Reset()
 		m.dashboard.unitUI.input.Blur()

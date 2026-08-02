@@ -5,7 +5,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/kibomibo/sshmon/internal/sshx"
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/kibomibo/sshmon/internal/collect"
+	"github.com/kibomibo/sshmon/internal/llm"
 )
 
 type fakeConnectionManager struct {
@@ -41,8 +44,8 @@ func TestDashboardReconnectRequestsSelectedServer(t *testing.T) {
 	connections := &fakeConnectionManager{}
 	m := Model{screen: screenDashboard, snapshot: snapshotWithServers("web"), connections: connections}
 
-	// When reconnect is requested and its asynchronous command runs.
-	m, cmd := updateModel(t, m, key("r"))
+	// When reconnect is requested (ctrl+r; plain r обновляет данные) and its asynchronous command runs.
+	m, cmd := updateModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	if cmd == nil {
 		t.Fatal("reconnect command is nil")
 	}
@@ -60,9 +63,9 @@ func TestDashboardReconnectRequestsSelectedServer(t *testing.T) {
 
 func TestPassphrasePromptMasksClearsAndRetries(t *testing.T) {
 	// Given reconnect reports that the selected encrypted key needs a passphrase.
-	connections := &fakeConnectionManager{errors: []error{sshx.ErrPassphraseRequired, nil}}
+	connections := &fakeConnectionManager{errors: []error{collect.ErrPassphraseRequired, nil}}
 	m := Model{screen: screenDashboard, snapshot: snapshotWithServers("web"), connections: connections}
-	m, cmd := updateModel(t, m, key("r"))
+	m, cmd := updateModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, _ = updateModel(t, m, cmd())
 	if m.overlay != overlayPassphrase {
 		t.Fatalf("overlay = %v", m.overlay)
@@ -89,6 +92,25 @@ func TestPassphrasePromptMasksClearsAndRetries(t *testing.T) {
 	m, _ = updateModel(t, m, cmd())
 	if len(connections.reconnects) != 2 {
 		t.Fatalf("reconnects = %#v", connections.reconnects)
+	}
+}
+
+func TestPassphrasePromptFromChatKeepsConversation(t *testing.T) {
+	// Given an open chat with a conversation and a reconnect in flight.
+	m := Model{screen: screenDashboard, snapshot: snapshotWithServers("web")}
+	m, _ = updateModel(t, m, key("c"))
+	m.chat.messages = []llm.Message{{Role: "user", Content: "что с web?"}}
+	m.reconnectGeneration = 1
+
+	// When reconnect reports that the key needs a passphrase.
+	m, _ = updateModel(t, m, reconnectResultMsg{server: "web", generation: 1, err: collect.ErrPassphraseRequired})
+
+	// Then the prompt takes over the screen without throwing the messages away.
+	if m.overlay != overlayPassphrase {
+		t.Fatalf("overlay = %v", m.overlay)
+	}
+	if len(m.chat.messages) != 1 {
+		t.Fatalf("chat messages = %#v", m.chat.messages)
 	}
 }
 

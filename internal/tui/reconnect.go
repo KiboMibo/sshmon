@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/kibomibo/sshmon/internal/sshx"
+	"github.com/kibomibo/sshmon/internal/collect"
 )
 
 type connectionManager interface {
@@ -51,7 +51,17 @@ func (m *Model) applyReconnectResult(msg reconnectResultMsg) {
 	if msg.generation != m.reconnectGeneration {
 		return
 	}
-	if errors.Is(msg.err, sshx.ErrPassphraseRequired) || errors.Is(msg.err, sshx.ErrInvalidPassphrase) {
+	if errors.Is(msg.err, collect.ErrPassphraseRequired) || errors.Is(msg.err, collect.ErrInvalidPassphrase) {
+		// Реконнект запускается и из палитры, и из чата: предыдущий оверлей
+		// нельзя оставлять недоделанным. У чата достаточно отменить активный
+		// запрос — переписка не имеет отношения к парольной фразе и переживает
+		// запрос; остальные оверлеи закрываем полностью.
+		if m.overlay == overlayChat {
+			m.cancelChat()
+			m.overlay = overlayNone
+		} else {
+			m.closeOverlay()
+		}
 		m.passphrase = newPassphraseOverlay(msg.server)
 		m.overlay = overlayPassphrase
 	}
@@ -59,20 +69,26 @@ func (m *Model) applyReconnectResult(msg reconnectResultMsg) {
 
 func (m *Model) handlePassphraseKey(key tea.KeyMsg) tea.Cmd {
 	if key.String() == "enter" {
-		value := m.passphrase.input.Value()
-		if value == "" || m.connections == nil {
+		if m.connections == nil {
 			return nil
 		}
-		secret := []byte(value)
+		// Одна строка от textinput и один байтовый буфер — больше копий секрета
+		// в куче не появляется, буфер зануляем сразу после передачи (получатель
+		// хранит собственную копию). Остаточный риск: внутренний []rune самого
+		// textinput не затирается — Reset лишь отбрасывает срез, и секрет живёт
+		// в куче до сборки мусора.
+		secret := []byte(m.passphrase.input.Value())
+		m.passphrase.input.Reset()
+		if len(secret) == 0 {
+			return nil
+		}
 		err := m.connections.SetPassphrase(m.passphrase.server, secret)
 		for index := range secret {
 			secret[index] = 0
 		}
 		if err != nil {
-			m.passphrase.input.Reset()
 			return nil
 		}
-		m.passphrase.input.Reset()
 		m.overlay = overlayNone
 		return m.startReconnect()
 	}

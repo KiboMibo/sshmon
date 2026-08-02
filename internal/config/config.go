@@ -5,12 +5,48 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 var ErrNoServers = errors.New("не задано ни одного сервера")
+
+// ErrBadHost — адрес, который внешние программы разберут не как адрес.
+var ErrBadHost = errors.New("недопустимый адрес хоста")
+
+// checkHost отсеивает значения, которые ssh поймёт иначе, чем задумано. Хост
+// уходит в argv команды `ssh`, и адрес вида «-oProxyCommand=…» (такой легко
+// приезжает из чужого ~/.ssh/config) разбирался бы как опция, а не как адрес.
+// Ошибка называет сервер и причину: молча выкинутый сервер выглядит как
+// пропажа хоста из мониторинга.
+func checkHost(server Server) error {
+	name := server.Name
+	if name == "" {
+		name = server.Host
+	}
+	switch {
+	case strings.TrimSpace(server.Host) == "":
+		return fmt.Errorf("сервер %q: %w: адрес пустой", name, ErrBadHost)
+	case strings.HasPrefix(server.Host, "-"):
+		return fmt.Errorf("сервер %q: %w: %q начинается с «-» — ssh примет его за опцию, а не за адрес", name, ErrBadHost, server.Host)
+	case strings.ContainsAny(server.Host, " \t\r\n"):
+		return fmt.Errorf("сервер %q: %w: %q содержит пробел или перевод строки", name, ErrBadHost, server.Host)
+	}
+	return nil
+}
+
+// checkHosts проверяет пачку серверов перед записью в конфиг: импорт из
+// ~/.ssh/config идёт именно так, и негодный адрес лучше отклонить на входе.
+func checkHosts(servers []Server) error {
+	for _, server := range servers {
+		if err := checkHost(server); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 type Server struct {
 	Name            string `yaml:"name"`
@@ -156,6 +192,9 @@ func Load(path string) (*Config, error) {
 		}
 		if s.Key != "" {
 			s.Key = expandHome(s.Key)
+		}
+		if err := checkHost(*s); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 	}
 	return &c, nil

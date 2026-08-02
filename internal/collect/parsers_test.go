@@ -56,6 +56,21 @@ func TestParseContainersCombinesListAndStats(t *testing.T) {
 	}
 }
 
+func TestParseContainersKeepsRunningFor(t *testing.T) {
+	t.Parallel()
+	// Given docker list output with the uptime column.
+	list := "abc123\tweb\tnginx:latest\tUp 2 hours\t0.0.0.0:8080->80/tcp\t3 weeks ago\n"
+	// When it is parsed.
+	got, err := ParseContainers(list, "")
+	// Then the raw relative uptime reaches the UI untouched.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].RunningFor != "3 weeks ago" {
+		t.Fatalf("got %#v", got)
+	}
+}
+
 func TestParsePortsPreservesProcessAndPID(t *testing.T) {
 	t.Parallel()
 	// Given ss output with TCP/UDP listeners and one malformed row.
@@ -73,6 +88,96 @@ func TestParsePortsPreservesProcessAndPID(t *testing.T) {
 	}
 }
 
+// TestParsePortsNormalizesIPv6Addresses — Дано: вывод `ss` (debian) и
+// `netstat` (centos 7) с одними и теми же IPv6-слушателями; Когда: порты
+// разобраны; Тогда: адрес записан в одной форме `[::]:41641` независимо от
+// утилиты, а IPv4 и имя процесса не тронуты.
+func TestParsePortsNormalizesIPv6Addresses(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		raw  string
+		want []Port
+	}{
+		{
+			name: "ss",
+			raw: "tcp   LISTEN 0 4096          [::]:41641          [::]:*    users:((\"tailscaled\",pid=812,fd=26))\n" +
+				"udp   UNCONN 0 0            [::1]:323            [::]:*    users:((\"chronyd\",pid=987,fd=7))\n" +
+				"tcp   LISTEN 0 128        0.0.0.0:22          0.0.0.0:*    users:((\"sshd\",pid=123,fd=3))\n",
+			want: []Port{
+				{Proto: "tcp", Local: "[::]:41641", Process: "tailscaled", PID: 812},
+				{Proto: "udp", Local: "[::1]:323", Process: "chronyd", PID: 987},
+				{Proto: "tcp", Local: "0.0.0.0:22", Process: "sshd", PID: 123},
+			},
+		},
+		{
+			name: "netstat",
+			raw: "tcp6       0      0 :::41641                :::*                    LISTEN      812/tailscaled\n" +
+				"udp6       0      0 ::1:323                 :::*                                987/chronyd\n" +
+				"tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN      123/sshd\n",
+			want: []Port{
+				{Proto: "tcp6", Local: "[::]:41641", Process: "tailscaled", PID: 812},
+				{Proto: "udp6", Local: "[::1]:323", Process: "chronyd", PID: 987},
+				{Proto: "tcp", Local: "0.0.0.0:22", Process: "sshd", PID: 123},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParsePorts(tt.raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %#v, want %#v", got, tt.want)
+			}
+			for index := range tt.want {
+				if got[index] != tt.want[index] {
+					t.Fatalf("порт %d: got %#v, want %#v", index, got[index], tt.want[index])
+				}
+			}
+		})
+	}
+}
+
+// TestNormalizeListenAddressLeavesForeignFormsAlone — Дано: адреса, которые
+// не являются IPv6 «хост:порт»; Когда: они нормализуются; Тогда: остаются как
+// есть — скобки не должны появляться там, где их некуда поставить.
+func TestNormalizeListenAddressLeavesForeignFormsAlone(t *testing.T) {
+	t.Parallel()
+	for _, address := range []string{"0.0.0.0:22", "127.0.0.1:323", "*:*", "[::]:41641", "[::1]:323", "::", "/run/systemd/journal/stdout"} {
+		if got := normalizeListenAddress(address); got != address {
+			t.Fatalf("адрес %q превратился в %q", address, got)
+		}
+	}
+	// И: смешанный адрес IPv4-в-IPv6 тоже получает скобки — он IPv6.
+	if got := normalizeListenAddress("::ffff:10.2.4.18:22"); got != "[::ffff:10.2.4.18]:22" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// TestParseContainersReportsDockerFailure — Дано: вывод `docker ps`, где
+// вместо списка пришла причина отказа (stderr слит со stdout); Когда: он
+// разобран; Тогда: причина доходит до вызывающего, а «нет прав» отличима от
+// прочих ошибок.
+func TestParseContainersReportsDockerFailure(t *testing.T) {
+	t.Parallel()
+	denied := "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock"
+	_, err := ParseContainers(denied+"\n", "")
+	if !errors.Is(err, ErrAccessDenied) {
+		t.Fatalf("got %v, want ErrAccessDenied", err)
+	}
+	_, err = ParseContainers("Cannot connect to the Docker daemon at unix:///var/run/docker.sock.\n", "")
+	if err == nil || errors.Is(err, ErrAccessDenied) {
+		t.Fatalf("got %v, want обычную ошибку с текстом", err)
+	}
+	// И: пустой вывод — это просто «контейнеров нет», а не отказ.
+	got, err := ParseContainers("\n", "")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("got %#v, err %v", got, err)
+	}
+}
+
 func TestDiagnosticsParsersReturnUnsupportedMarker(t *testing.T) {
 	t.Parallel()
 	// Given the marker emitted when a remote command is unavailable.
@@ -85,5 +190,38 @@ func TestDiagnosticsParsersReturnUnsupportedMarker(t *testing.T) {
 		if !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("got %v, want ErrUnsupported", err)
 		}
+	}
+}
+
+func TestParseProcessesIgnoresMarkerInsideCommandLine(t *testing.T) {
+	t.Parallel()
+	// Given: вывод живого `ps`, в котором виден шелл нашей же команды — вместе с
+	// веткой «утилиты нет» и её маркером в аргументах.
+	raw := "  832  0.0  1.2 /usr/lib/systemd/systemd --system\n" +
+		" 28841  0.0  0.0 sh -c " + processesCommand + "\n" +
+		" 28842  0.5  9.4 /usr/bin/java -Xmx2g -jar app.jar\n"
+
+	// When: вывод разбирается.
+	got, err := ParseProcesses(raw)
+
+	// Then: `ps` считается доступным, а процессы разобраны.
+	if err != nil {
+		t.Fatalf("ps объявлен недоступным на живом хосте: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("разобрано %d процессов: %#v", len(got), got)
+	}
+	if got[2].PID != 28842 || got[2].MemPct != 9.4 {
+		t.Fatalf("процесс разобран неверно: %#v", got[2])
+	}
+}
+
+func TestParseProcessesKeepsMarkerOnItsOwnLine(t *testing.T) {
+	t.Parallel()
+	// Given: ответ хоста, где ps действительно нет, — маркер отдельной строкой
+	// с завершающим переводом строки, как его печатает echo.
+	// When/Then: ветка «не поддерживается» по-прежнему срабатывает.
+	if _, err := ParseProcesses(unsupportedMarker + "\n"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("got %v, want ErrUnsupported", err)
 	}
 }

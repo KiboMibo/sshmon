@@ -3,6 +3,7 @@ package collect
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -43,20 +44,29 @@ type Process struct {
 }
 
 type Container struct {
-	ID       string
-	Name     string
-	Image    string
-	Status   string
-	Ports    string
-	CPUPct   float64
-	MemPct   float64
-	MemUsage string
+	ID     string
+	Name   string
+	Image  string
+	Status string
+	// RunningFor — сырой `{{.RunningFor}}` docker'а («3 weeks ago», «2 days ago»):
+	// относительная английская строка, форматирование под колонку — забота TUI.
+	RunningFor string
+	Ports      string
+	CPUPct     float64
+	MemPct     float64
+	MemUsage   string
 }
 
 type DockerCounts struct {
 	Running int
 	Stopped int
 	Broken  int
+	// Known — счётчики действительно собраны: docker на хосте есть и ответил.
+	// «Контейнеров нет» и «docker недоступен» дают одинаковые нули, но это
+	// разные факты: первый — норма, второй — повод не искать контейнеры глазами.
+	// Нулевое значение поля означает «неизвестно», поэтому offline-хост и
+	// сервер до первого опроса сами собой попадают в прочерк.
+	Known bool
 }
 
 func (d DockerCounts) Total() int { return d.Running + d.Stopped + d.Broken }
@@ -80,6 +90,7 @@ type Metrics struct {
 	Online   bool
 	Err      string
 	Hostname string
+	OS       string // дистрибутив из /etc/os-release, например «debian 12»
 	Uptime   time.Duration
 	Load1    float64
 	Load5    float64
@@ -98,6 +109,17 @@ type Metrics struct {
 	Net    []NetRate
 	Ports  []Port
 	Docker DockerCounts
+}
+
+// clone копирует слайсовые поля, чтобы выданные наружу метрики не разделяли
+// память с состоянием коллектора. Слайсы короткие (диски, интерфейсы, порты),
+// копия дешевле любой синхронизации на стороне читателя.
+func (m Metrics) clone() Metrics {
+	m.Disks = slices.Clone(m.Disks)
+	m.IO = slices.Clone(m.IO)
+	m.Net = slices.Clone(m.Net)
+	m.Ports = slices.Clone(m.Ports)
+	return m
 }
 
 type Issue struct {

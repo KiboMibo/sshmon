@@ -24,6 +24,49 @@ func TestLogBufferEvictsOldestLinesAtCapacity(t *testing.T) {
 	}
 }
 
+func TestLogBufferKeepsWindowAcrossCompaction(t *testing.T) {
+	t.Parallel()
+	// Given a small buffer fed far past its capacity (several compaction rounds).
+	buffer := NewLogBuffer(4)
+	for i := range 20 {
+		buffer.Append(fmt.Sprintf("l%02d", i))
+	}
+	// When the retained window is read.
+	got := buffer.Visible()
+	// Then it holds exactly the newest lines in chronological order.
+	if want := []string{"l16", "l17", "l18", "l19"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("window = %#v, want %#v", got, want)
+	}
+	if buffer.Total() != 4 {
+		t.Fatalf("total = %d, want 4", buffer.Total())
+	}
+}
+
+func TestLogBufferResetDropsLinesAndKeepsPause(t *testing.T) {
+	t.Parallel()
+	// Given a paused buffer holding lines of the previous host.
+	buffer := NewLogBuffer(10)
+	buffer.Append("web line")
+	buffer.SetPaused(true)
+
+	// When the stream is restarted on another host.
+	buffer.Reset()
+	buffer.Append("db line")
+
+	// Then nothing is shown while the pause survives the reset,
+	if got := buffer.Visible(); len(got) != 0 {
+		t.Fatalf("visible while paused = %#v", got)
+	}
+	// and after unpausing only the new host's lines are left.
+	buffer.SetPaused(false)
+	if got := buffer.Visible(); len(got) != 1 || got[0] != "db line" {
+		t.Fatalf("visible after unpause = %#v", got)
+	}
+	if buffer.Total() != 1 {
+		t.Fatalf("total = %d, want 1", buffer.Total())
+	}
+}
+
 func TestLogBufferPauseRetainsInputWithoutAdvancingView(t *testing.T) {
 	t.Parallel()
 	// Given a buffer paused after two visible lines.

@@ -38,6 +38,22 @@ func TestEscapeClosesOverlayBeforeNavigatingScreen(t *testing.T) {
 	}
 }
 
+func TestHelpOverlayClosesOnQuestionMarkAsAdvertised(t *testing.T) {
+	// Given Help over a deep screen and its own "esc / ?" hint.
+	m := Model{screen: screenProcesses, overlay: overlayHelp}
+	if !strings.Contains(helpText(screenProcesses), "esc / ? — закрыть") {
+		t.Fatal("help stopped advertising the ? shortcut")
+	}
+
+	// When ? is pressed.
+	m, _ = updateModel(t, m, key("?"))
+
+	// Then Help closes instead of swallowing the key.
+	if m.overlay != overlayNone || m.screen != screenProcesses {
+		t.Fatalf("overlay=%v screen=%v", m.overlay, m.screen)
+	}
+}
+
 func TestSearchOverlayAppliesFleetQueryAndSelectsMatch(t *testing.T) {
 	// Given Fleet with a Search query matching only the second server.
 	m := Model{screen: screenFleet, snapshot: snapshotWithServers("web", "db"), fleet: newFleetModel(), search: newSearchOverlay()}
@@ -72,5 +88,24 @@ func TestHelpContentDependsOnActiveScreen(t *testing.T) {
 	}
 	if strings.Contains(fleetHelp, "история метрик") {
 		t.Fatalf("Fleet help advertises Dashboard-only keys: %q", fleetHelp)
+	}
+}
+
+func TestHelpAdvertisesExitAndDrawerKeysOnEveryScreen(t *testing.T) {
+	// Given every screen that has its own key map.
+	screens := []screenKind{screenFleet, screenDashboard, screenLogs, screenHistory, screenProcesses, screenPorts, screenContainers}
+
+	// When their help is rendered.
+	for _, kind := range screens {
+		text := helpText(kind)
+		// Then the global exit is documented everywhere it works.
+		if !strings.Contains(text, "q ctrl+c") {
+			t.Fatalf("help of screen %v misses the exit key: %q", kind, text)
+		}
+	}
+
+	// And the fleet map documents the log drawer source switch bound to "s".
+	if !strings.Contains(helpText(screenFleet), "источник") {
+		t.Fatalf("Fleet help misses the log drawer source key: %q", helpText(screenFleet))
 	}
 }

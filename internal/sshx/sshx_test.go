@@ -19,7 +19,7 @@ import (
 	"github.com/kibomibo/sshmon/internal/config"
 )
 
-func TestRunCommandCancellationDropsConnection(t *testing.T) {
+func TestRunCommandCancellationKeepsConnection(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	started := make(chan struct{})
@@ -42,12 +42,78 @@ func TestRunCommandCancellationDropsConnection(t *testing.T) {
 
 	// When its context is cancelled.
 	cancel()
-	// Then RunContext's shared execution path returns context.Canceled and drops the connection.
+	// Then the caller gets context.Canceled while the shared connection survives:
+	// the metrics collector keeps using it without a new handshake.
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v, want context.Canceled", err)
 	}
-	if !dropped.Load() {
-		t.Fatal("connection was not dropped")
+	if dropped.Load() {
+		t.Fatal("cancellation must not drop the shared connection")
+	}
+}
+
+func TestRunCommandDropsOnTransportFailureButNotOnExitStatus(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		err      error
+		wantDrop bool
+	}{
+		{name: "transport", err: errors.New("connection lost"), wantDrop: true},
+		{name: "exit status", err: &ssh.ExitError{}, wantDrop: false},
+		{name: "success", err: nil, wantDrop: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// Given a command that finishes with the given outcome.
+			var dropped atomic.Bool
+			// When it is executed.
+			_, err := runCommand(context.Background(), func() ([]byte, error) { return nil, tt.err }, func() { dropped.Store(true) })
+			// Then only a broken transport invalidates the cached connection.
+			if !errors.Is(err, tt.err) {
+				t.Fatalf("err = %v, want %v", err, tt.err)
+			}
+			if dropped.Load() != tt.wantDrop {
+				t.Fatalf("dropped = %v, want %v", dropped.Load(), tt.wantDrop)
+			}
+		})
+	}
+}
+
+func TestCommandOutputKeepsExitStatusOutputButNotPartialTransportOutput(t *testing.T) {
+	t.Parallel()
+	transport := errors.New("connection lost")
+	tests := []struct {
+		name    string
+		out     []byte
+		err     error
+		want    string
+		wantErr error
+	}{
+		{name: "успех", out: []byte("data"), err: nil, want: "data"},
+		{name: "ненулевой код с выводом", out: []byte("data"), err: &ssh.ExitError{}, want: "data"},
+		{name: "ненулевой код без вывода", err: &ssh.ExitError{}, wantErr: &ssh.ExitError{}},
+		{name: "обрыв с частичным выводом", out: []byte("part"), err: transport, wantErr: transport},
+		{name: "обрыв без вывода", err: transport, wantErr: transport},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// Given a finished command with the given output and error.
+			// When its outcome is classified.
+			got, err := commandOutput(tt.out, tt.err)
+			// Then partial output of a broken transport never passes as success.
+			if tt.wantErr != nil {
+				if err == nil || got != "" {
+					t.Fatalf("out=%q err=%v, want error and empty output", got, err)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("out=%q err=%v, want %q and no error", got, err, tt.want)
+			}
+		})
 	}
 }
 

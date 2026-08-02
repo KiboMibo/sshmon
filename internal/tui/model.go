@@ -13,7 +13,6 @@ import (
 
 type Model struct {
 	collector       *collect.Collector
-	llm             *llm.Client
 	chatClient      chatClient
 	dashboardSource dashboardSource
 	config          *config.Config
@@ -40,13 +39,15 @@ type Model struct {
 	overlayState        overlayState
 	connections         connectionManager
 	reconnectGeneration uint64
+	cpuTrends           map[string][]*float64
+	netTrends           map[string][]*float64
 
 	events      <-chan collect.Event
 	unsubscribe func()
 }
 
 func New(collector *collect.Collector, client *llm.Client, cfg *config.Config) Model {
-	m := Model{collector: collector, llm: client, chatClient: client, dashboardSource: collector, config: cfg, screen: screenFleet, fleet: newFleetModel(), logs: newLogsScreen(), logSource: collector, chat: newChatOverlay(), search: newSearchOverlay(), palette: newPaletteOverlay(), connections: collector}
+	m := Model{collector: collector, chatClient: client, dashboardSource: collector, config: cfg, screen: screenFleet, fleet: newFleetModel(), logs: newLogsScreen(), logSource: collector, chat: newChatOverlay(), search: newSearchOverlay(), palette: newPaletteOverlay(), connections: collector}
 	if collector != nil {
 		m.snapshot = collector.Snapshot()
 		m.events, m.unsubscribe = collector.Subscribe(1)
@@ -64,14 +65,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.ensureFleet()
+		// Сравниваем видимость сайдбара до и после изменения размера, а не
+		// статус запроса: статус выходит из diagnosticsIdle навсегда, и
+		// появившийся после расширения терминала сайдбар показывал процессы
+		// того хоста, на котором его видели в прошлый раз. Промежуточные
+		// размеры (перетаскивание рамки окна) видимость не меняют и ничего не
+		// перезапрашивают — иначе каждая ширина слала бы свою ssh-команду.
+		visible := m.fleetSidebarVisible()
 		m.layout = newLayout(msg.Width, msg.Height)
 		m.logs.resize(m.layout.width, m.layout.height)
 		m.resizeOverlay(msg.Width, msg.Height)
+		if m.fleetSidebarVisible() != visible {
+			return m, m.scheduleFleetTopProcesses()
+		}
 		return m, nil
 	case collectorEventMsg:
 		previousMinute := m.snapshot.Time.Truncate(time.Minute)
 		m.snapshot = msg.event.Snapshot
 		m.clampSelection()
+		m.recordTrends()
 		if m.screen == screenHistory && !m.snapshot.Time.Truncate(time.Minute).Equal(previousMinute) {
 			return m, tea.Batch(waitEvent(m.events), m.startHistoryQuery())
 		}
@@ -96,9 +109,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, scheduleDiagnostics(screenContainers, msg.generation)
 		}
 		return m, nil
+	case debounceMsg:
+		return m, m.applyDebounce(msg)
 	case diagnosticsTickMsg:
-		if msg.screen == m.screen && msg.generation == m.diagnosticsGeneration(msg.screen) {
+		if msg.generation != m.diagnosticsGeneration(msg.screen) {
+			return m, nil
+		}
+		if msg.screen == m.screen {
 			return m, m.startDiagnostics()
+		}
+		// Сайдбар флота живёт на состоянии процессов, но экран при этом
+		// screenFleet — по равенству экранов тик отбрасывался, и «ТОП ПО
+		// ПАМЯТИ» замирал на снимке момента последнего движения курсора.
+		// Дебаунс здесь не нужен: тик приходит по таймеру, а не с клавиатуры.
+		if msg.screen == screenProcesses && m.fleetSidebarVisible() {
+			return m, m.refreshFleetTopProcesses()
 		}
 		return m, nil
 	case historyResultMsg:
@@ -166,8 +191,9 @@ func (m Model) View() string {
 	if m.overlay != overlayNone {
 		overlay = m.renderOverlay()
 	}
-	body := composeScreen(m.renderScreen(), overlay, m.layout)
-	return frameStyle.Width(m.layout.width).Height(m.layout.height).Render(body)
+	// Внешней рамки у кадра нет (макет): экран занимает весь терминал,
+	// рамки остаются только у отдельных плиток.
+	return composeScreen(m.renderScreen(), overlay, m.layout)
 }
 
 func (m Model) renderScreen() string {
@@ -191,11 +217,6 @@ func (m Model) renderScreen() string {
 	}
 }
 
-func (m Model) renderDeepPlaceholder(title string) string {
-	return titleStyle.Render("sshmon · "+m.selectedName()+" · "+title) + "\n\n" +
-		dimStyle.Render("данные загружаются · esc назад")
-}
-
 func (m *Model) clampSelection() {
 	if len(m.snapshot.Servers) == 0 {
 		m.selected = 0
@@ -216,11 +237,15 @@ func (m Model) selectedName() string {
 	return "сервер не выбран"
 }
 
+// closeSubscription идемпотентна: её зовут на каждом пути выхода, а сама
+// отписка коллектора защищена sync.Once. Канал событий тоже забываем — иначе
+// waitEvent продолжит читать уже закрытый канал.
 func (m *Model) closeSubscription() {
 	if m.unsubscribe != nil {
 		m.unsubscribe()
 		m.unsubscribe = nil
 	}
+	m.events = nil
 }
 
 var _ tea.Model = Model{}

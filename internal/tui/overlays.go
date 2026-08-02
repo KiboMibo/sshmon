@@ -83,10 +83,11 @@ func (m Model) renderOverlay() string {
 	case overlayPassphrase:
 		content = m.renderPassphrase()
 	}
-	box := overlayStyle.Copy().BorderStyle(lipgloss.RoundedBorder()).Padding(1, 2)
+	box := overlayStyle.BorderStyle(lipgloss.RoundedBorder()).Padding(1, 2)
 	rendered := box.Render(content)
 	if m.layout.width > 0 && lipgloss.Width(rendered) > m.layout.width {
-		rendered = box.Width(m.layout.width - frameOverhead).Render(content)
+		// Width задаёт содержимое без рамки — под неё вычитаем две ячейки.
+		rendered = box.Width(m.layout.width - 2).Render(content)
 	}
 	return rendered
 }
@@ -116,6 +117,12 @@ func (m *Model) handleOverlayKey(key tea.KeyMsg) (tea.Cmd, bool) {
 		return m.handlePaletteKey(key), true
 	case overlayPassphrase:
 		return m.handlePassphraseKey(key), true
+	case overlayHelp:
+		// Справка сама обещает «esc / ? — закрыть», поэтому «?» обязан закрывать.
+		if key.String() == "?" {
+			m.closeOverlay()
+		}
+		return nil, true
 	default:
 		return nil, true
 	}

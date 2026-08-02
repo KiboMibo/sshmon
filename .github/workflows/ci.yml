@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+# actions/* намеренно оставлены на плавающих мажорах: пин на commit SHA требует
+# сверенных дайджестов, а неверный SHA роняет весь CI. Мажорные теги actions/*
+# сопровождаются самим GitHub, риск считаем приемлемым.
 jobs:
   build-test:
     runs-on: ubuntu-latest
@@ -25,6 +28,11 @@ jobs:
         run: go build ./...
       - name: test
         run: go test ./...
+      # Отдельным шагом, а не отдельной джобой: переиспользуются тот же checkout
+      # и уже прогретый кеш модулей и сборки. Обычный прогон оставлен — он
+      # проверяет неинструментированный бинарник и падает быстрее.
+      - name: test -race
+        run: go test -race ./...
 
   govulncheck:
     runs-on: ubuntu-latest
@@ -34,5 +42,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # Версия запинена: @latest тянул в CI недетерминированный сторонний код.
+      # Обновлять осознанно, вместе с зависимостями.
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...

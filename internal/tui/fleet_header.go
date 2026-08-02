@@ -71,7 +71,7 @@ func fleetTiles(servers []collect.Metrics, issues []collect.Issue, active string
 func fleetTile(label string, counts fleetCounts, active bool) string {
 	style, shape := dimStyle, lipgloss.RoundedBorder()
 	if active {
-		green := goodStyle.Copy().BorderForeground(lipgloss.Color("42"))
+		green := goodStyle.BorderForeground(lipgloss.Color("42"))
 		style, shape = green, lipgloss.DoubleBorder()
 	}
 	title := fmt.Sprintf("%s %d", label, counts.total())
@@ -83,7 +83,7 @@ func fleetTile(label string, counts fleetCounts, active bool) string {
 		style.Bold(true).Render(title),
 		glyphs,
 	)
-	return style.Copy().BorderStyle(shape).Padding(1, 2).Align(lipgloss.Center).Render(body)
+	return style.BorderStyle(shape).Padding(1, 2).Align(lipgloss.Center).Render(body)
 }
 
 func tileGlyphs(counts fleetCounts) string {
@@ -132,12 +132,14 @@ func (m Model) fleetGroupBox(width int) []string {
 	if len(tiles) < 2 {
 		return nil
 	}
-	return packTiles(tiles, width)
+	// Общая рамка «ГРУППЫ» по макету: без неё ряд плиток читается как продолжение
+	// шапки, а не как отдельный переключатель области видимости.
+	return panelBoxStyled("ГРУППЫ", "", width, packTiles(tiles, width-4), dimStyle)
 }
 
 func (m Model) fleetHeader(width int) string {
 	counts := countStates(m.snapshot.Servers, m.snapshot.Issues)
-	left := fmt.Sprintf("%s  %d хостов   %s", titleStyle.Render("FLEET"), counts.total(), stateSummary(counts))
+	left := fmt.Sprintf("%s  %s   %s", titleStyle.Render("FLEET"), hostsText(counts.total()), stateSummary(counts))
 	return spread(left, dimStyle.Render(m.pollHint()), width)
 }
 
@@ -179,7 +181,7 @@ func (m Model) fleetContextLine(visible, groupTotal, width int) string {
 	if scope == "" {
 		scope = "всё"
 	}
-	left := fmt.Sprintf("%s · %d хостов", titleStyle.Render(scope), groupTotal)
+	left := fmt.Sprintf("%s · %s", titleStyle.Render(scope), hostsText(groupTotal))
 	if query := m.fleet.filter.Query; query != "" || m.fleet.searching {
 		left += "   поиск > " + query
 		if m.fleet.searching {

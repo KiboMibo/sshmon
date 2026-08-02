@@ -48,7 +48,9 @@ func (c *Collector) SystemdUnits(ctx context.Context, server string, configured 
 func ParseSystemdUnits(raw string) []SystemdUnit {
 	var units []SystemdUnit
 	for line := range strings.SplitSeq(raw, "\n") {
-		fields := strings.Fields(line)
+		// Имя и описание юнита приходят из unit-файла на удалённом хосте, а
+		// показывает их и список юнитов, и ось источников экрана логов.
+		fields := strings.Fields(SanitizeLine(line))
 		if len(fields) < 4 {
 			continue
 		}

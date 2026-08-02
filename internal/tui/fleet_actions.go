@@ -28,26 +28,42 @@ func (m *Model) startFleetCardUnits() tea.Cmd {
 
 func (m *Model) moveFleetBy(delta int) tea.Cmd {
 	m.ensureFleet()
+	previous := m.selectedName()
 	m.moveFleet(delta)
-	if !m.fleet.expanded {
+	if m.fleet.expanded {
+		return m.startFleetCardUnits()
+	}
+	// Запрос строго по факту смены хоста: удержанная стрелка иначе слала бы по
+	// SSH-команде на каждое движение курсора, а упёршийся в край список — на
+	// каждое нажатие.
+	if m.selectedName() == previous {
 		return nil
 	}
-	return m.startFleetCardUnits()
+	return m.scheduleFleetTopProcesses()
 }
 
-func (m Model) openFromFleet(kind screenKind) (tea.Model, tea.Cmd) {
+// openFromFleet уходит с экрана флота на экран kind, попутно поднимая workspace
+// сервера: без него «esc» возвращал бы на дашборд, который никогда не грузился.
+// Приёмник — указатель: тот же переход делает и ящик логов, а он правит модель
+// на месте.
+func (m *Model) openFromFleet(kind screenKind) (tea.Model, tea.Cmd) {
 	if len(m.snapshot.Servers) == 0 {
-		return m, nil
+		return *m, nil
+	}
+	// Ящик логов остаётся открытым за кадром вместе со своим ssh-потоком:
+	// с экрана флота уходим — закрываем и его.
+	if m.fleet.logbox {
+		m.closeFleetLogbox()
 	}
 	workspace := m.startDashboardWorkspace()
 	m.screen = kind
 	switch kind {
 	case screenProcesses, screenPorts, screenContainers:
-		return m, tea.Batch(workspace, m.startDiagnostics())
+		return *m, tea.Batch(workspace, m.startDiagnostics())
 	case screenLogs:
-		return m, tea.Batch(workspace, m.startLogsStream())
+		return *m, tea.Batch(workspace, m.startLogsStream())
 	default:
-		return m, workspace
+		return *m, workspace
 	}
 }
 
@@ -81,5 +97,7 @@ func sshArgs(server config.Server) []string {
 	if server.User != "" {
 		target = server.User + "@" + server.Host
 	}
-	return append(args, target)
+	// «--» закрывает список опций: конфиг проверяется при чтении, но адрес,
+	// начинающийся с «-», не должен превращаться в опцию ssh даже здесь.
+	return append(args, "--", target)
 }

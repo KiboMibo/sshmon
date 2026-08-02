@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,11 @@ type serverState struct {
 	runner pollRunner
 	m      Metrics
 	prev   *counters
+	os     string // дистрибутив: спрашиваем один раз, он не меняется
+	// osProbed — зонд /etc/os-release уже отправляли. Пустой os не годится как
+	// признак: на busybox/OpenWrt и в части контейнеров файла нет, и по нему
+	// лишняя секция уходила бы в каждом сэмпле.
+	osProbed bool
 }
 
 type Collector struct {
@@ -31,6 +37,10 @@ type Collector struct {
 	subscribers map[uint64]chan Event
 	nextSubID   uint64
 	historyErr  string
+	// runCtx — контекст жизни коллектора, запомненный в RunWithSink. Хранить
+	// контекст в структуре не принято, но иначе внеплановые операции (Reconnect)
+	// не узнают о завершении процесса: публичные сигнатуры менять нельзя.
+	runCtx context.Context
 }
 
 func New(cfg *config.Config) *Collector {
@@ -52,6 +62,9 @@ func (c *Collector) Run(ctx context.Context) {
 
 // RunWithSink опрашивает серверы, сохраняет снимки во внешнем приёмнике и публикует события.
 func (c *Collector) RunWithSink(ctx context.Context, sink func(context.Context, Snapshot) error) {
+	c.mu.Lock()
+	c.runCtx = ctx
+	c.mu.Unlock()
 	c.pollAndPublish(ctx, sink)
 	t := time.NewTicker(c.cfg.Interval)
 	defer t.Stop()
@@ -72,15 +85,16 @@ func (c *Collector) pollAndPublish(ctx context.Context, sink func(context.Contex
 	}
 	snapshot := c.Snapshot()
 	if sink != nil {
-		err := sink(ctx, snapshot)
-		c.mu.Lock()
-		if err == nil {
-			c.historyErr = ""
-		} else {
-			c.historyErr = err.Error()
+		historyErr := ""
+		if err := sink(ctx, snapshot); err != nil {
+			historyErr = err.Error()
 		}
+		c.mu.Lock()
+		c.historyErr = historyErr
 		c.mu.Unlock()
-		snapshot = c.Snapshot()
+		// Пересобирать снапшот не нужно: изменилось только здоровье истории,
+		// а повторный Snapshot() ещё раз прогонял бы детекцию проблем по всем серверам.
+		snapshot.HistoryErr = historyErr
 	}
 	c.publish(Event{Snapshot: snapshot})
 }
@@ -101,18 +115,36 @@ func (c *Collector) poll(ctx context.Context, st *serverState) error {
 	now := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	raw, err := st.runner.RunContext(ctx, sampleCmd)
+	c.mu.Lock()
+	probeOS := !st.osProbed
+	c.mu.Unlock()
+	cmd := sampleCmd
+	if probeOS {
+		cmd = sampleCmdWithOS
+	}
+	raw, err := st.runner.RunContext(ctx, cmd)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err != nil {
-		st.m = Metrics{Name: st.cfg.Name, Group: st.cfg.Group, Time: now, Online: false, Err: sshx.FriendlyErr(err, st.cfg)}
+		// Текст ошибки ssh несёт в себе куски ответа удалённой стороны (баннер,
+		// сообщение sshd), а показывают его карточка хоста и MCP — доверия к нему
+		// не больше, чем к строке лога.
+		st.m = Metrics{Name: st.cfg.Name, Group: st.cfg.Group, Time: now, Online: false, OS: st.os, Err: SanitizeLine(sshx.FriendlyErr(err, st.cfg))}
 		st.prev = nil
 		return err
 	}
 	s := parseSample(raw, now)
+	// Зонд отработал: повторять его нельзя даже с пустым результатом — файла
+	// может просто не быть, и тогда мы слали бы лишнюю секцию вечно.
+	if probeOS {
+		st.osProbed = true
+	}
+	if s.os != "" {
+		st.os = s.os
+	}
 	m := Metrics{
 		Name: st.cfg.Name, Group: st.cfg.Group, Time: now, Online: true,
-		Hostname: s.hostname, Uptime: s.uptime,
+		Hostname: s.hostname, OS: st.os, Uptime: s.uptime,
 		Load1: s.load1, Load5: s.load5, Load15: s.load15,
 		NumCPU:     s.c.ncpu,
 		MemTotalKB: s.memTotal, MemAvailKB: s.memAvail,
@@ -137,9 +169,20 @@ func (c *Collector) Reconnect(server string) error {
 		return err
 	}
 	state.runner.Reset()
-	err = c.poll(context.Background(), state)
+	err = c.poll(c.lifetimeCtx(), state)
 	c.publish(Event{Snapshot: c.Snapshot()})
 	return err
+}
+
+// lifetimeCtx — контекст жизни коллектора; до старта Run/RunWithSink его нет,
+// тогда операция не привязана ни к чему и ограничена только своим таймаутом.
+func (c *Collector) lifetimeCtx() context.Context {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.runCtx == nil {
+		return context.Background()
+	}
+	return c.runCtx
 }
 
 // SetPassphrase передаёт секрет выбранному SSH-клиенту только в память процесса.
@@ -164,13 +207,17 @@ func (c *Collector) stateByName(name string) (*serverState, error) {
 }
 
 // Snapshot — копия текущего состояния всех серверов + детекция проблем.
-// Слайсы внутри Metrics разделяются с внутренним состоянием: только чтение.
+//
+// Возвращаемое значение полностью принадлежит вызывающему: слайсы внутри Metrics
+// (Disks/IO/Net/Ports) скопированы, коллектор их больше не трогает. Снапшот можно
+// держать сколько угодно и читать из другой горутины, не боясь, что следующий тик
+// перепишет данные под руками.
 func (c *Collector) Snapshot() Snapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	s := Snapshot{Time: time.Now(), HistoryErr: c.historyErr}
 	for _, st := range c.states {
-		s.Servers = append(s.Servers, st.m)
+		s.Servers = append(s.Servers, st.m.clone())
 	}
 	s.Issues = c.issuesLocked(s.Servers)
 	return s
@@ -228,5 +275,11 @@ func (c *Collector) TailLog(server string, lines int) (string, error) {
 	cmd := fmt.Sprintf(
 		"journalctl -n %d --no-pager 2>/dev/null || tail -n %d /var/log/syslog 2>/dev/null || tail -n %d /var/log/messages 2>/dev/null || (logread 2>/dev/null | tail -n %d)",
 		lines, lines, lines, lines)
-	return cli.Run(cmd, 20*time.Second)
+	raw, err := cli.Run(cmd, 20*time.Second)
+	if err != nil {
+		return "", err
+	}
+	// MCP отдаёт этот текст наружу другим клиентам, и он тоже попадает в чей-то
+	// терминал. Чистим построчно: разбивку на строки хвост лога должен сохранить.
+	return strings.Join(sanitizeFields(strings.Split(raw, "\n")), "\n"), nil
 }

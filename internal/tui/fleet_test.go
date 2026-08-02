@@ -1,14 +1,35 @@
 package tui
 
 import (
+	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/kibomibo/sshmon/internal/collect"
 	"github.com/kibomibo/sshmon/internal/config"
 )
+
+// stripANSI убирает из кадра управляющие последовательности: проверки на
+// «строка кончается вплотную к рамке» иначе спотыкались бы о сброс стиля,
+// который стоит между последним числом и границей панели.
+func stripANSI(value string) string {
+	runes := []rune(value)
+	var out strings.Builder
+	for index := 0; index < len(runes); {
+		if runes[index] == 0x1b {
+			index = escapeEnd(runes, index)
+			continue
+		}
+		out.WriteRune(runes[index])
+		index++
+	}
+	return out.String()
+}
 
 func TestFleetRenderAdaptsPreviewAndHasNoTabs(t *testing.T) {
 	// Given an online selected server with metrics and a problem.
@@ -63,11 +84,412 @@ func TestFleetRowShowsServerUptimeInsteadOfDataAge(t *testing.T) {
 	// Given an online server reporting a multi-day uptime.
 	m := Model{screen: screenFleet, snapshot: collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{{Name: "web", Group: "prod", Online: true, Time: time.Now().Add(-7 * time.Second), Uptime: 50*time.Hour + 30*time.Minute}}}}
 	m.layout = newLayout(80, 24)
-	// When the Fleet screen is rendered.
+	// When the row is expanded, where the uptime column belongs.
+	m, _ = updateModel(t, m, key("right"))
 	view := m.View()
-	// Then the table shows the server uptime column instead of the sample age.
-	if !strings.Contains(view, "UPTIME") || !strings.Contains(view, "2d2h") || strings.Contains(view, "ВОЗРАСТ") {
+	// Then the table shows the server uptime in the layout format, not the sample age.
+	if !strings.Contains(view, "UPTIME") || !strings.Contains(view, "2д") || strings.Contains(view, "ВОЗРАСТ") {
 		t.Fatalf("fleet view = %q", view)
+	}
+}
+
+func TestFleetExpandedKeepsSidebarBesideTheCard(t *testing.T) {
+	// Given a wide fleet with the sidebar enabled.
+	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{{
+		Name: "kava", Group: "main", Online: true, Time: time.Now(), Hostname: "10.2.4.18",
+		NumCPU: 8, CPUPct: 16, MemPct: 61, MemTotalKB: 16 * 1024 * 1024, MemAvailKB: 6 * 1024 * 1024,
+	}}}
+	m := Model{screen: screenFleet, snapshot: snapshot, layout: newLayout(140, 40), fleet: newFleetModel()}
+	// When the sidebar is visible, it carries the host details.
+	if view := m.View(); !strings.Contains(view, "ЧТО НЕ ТАК") || !strings.Contains(view, "ДЕЙСТВИЯ") {
+		t.Fatalf("sidebar missing before expansion:\n%s", view)
+	}
+	// When the row is expanded with the right arrow.
+	m, _ = updateModel(t, m, key("right"))
+	view := m.View()
+	// Then the sidebar stays: контекст «что не так» нужен именно в этот момент
+	// (осознанное расхождение с макетом 3b).
+	for _, want := range []string{"ЧТО НЕ ТАК", "ТОП ПО ПАМЯТИ", "ДЕЙСТВИЯ"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("sidebar section %q lost on expansion:\n%s", want, view)
+		}
+	}
+	if !strings.Contains(view, "ядер") || !strings.Contains(view, "10.2.4.18") {
+		t.Fatalf("expanded card missing:\n%s", view)
+	}
+	// And each frame line still fits the terminal: карточка ужимается, а не
+	// вылезает за правую рамку сайдбара.
+	for _, line := range strings.Split(view, "\n") {
+		if lipgloss.Width(line) > 140 {
+			t.Fatalf("строка кадра в %d ячеек при ширине 140: %q", lipgloss.Width(line), line)
+		}
+	}
+}
+
+func TestFleetStateColumnCarriesTextAndSelectionMarker(t *testing.T) {
+	// Given an offline host, a host with a problem and a healthy selected host.
+	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+		{Name: "web", Group: "prod", Online: true, Time: time.Now()},
+		{Name: "db", Group: "prod", Online: true, Time: time.Now()},
+		{Name: "arb", Group: "prod", Time: time.Now()},
+	}, Issues: []collect.Issue{{Server: "db", Severity: "warn", Msg: "память 98%"}}}
+	m := Model{screen: screenFleet, snapshot: snapshot, layout: newLayout(120, 30), fleet: newFleetModel()}
+	// When the list is rendered.
+	view := m.View()
+	// Then the state column reads without colour and the cursor row is marked.
+	for _, want := range []string{"ХОСТ", "СОСТ", "● норма", "⚠ память 98%", "× нет связи", fleetMarker} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("fleet list misses %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "ИМЯ") {
+		t.Fatalf("first column is still named ИМЯ:\n%s", view)
+	}
+}
+
+func TestFleetColumnsAppearOnlyWithDetailsAndDegrade(t *testing.T) {
+	// Given the list mode and the details mode at the same width.
+	plain := fleetColumnLayout(120, false)
+	detailed := fleetColumnLayout(120, true)
+	// Then uptime belongs to the details mode only.
+	if plain.uptime {
+		t.Fatalf("list mode shows extra columns: %+v", plain)
+	}
+	if !detailed.uptime {
+		t.Fatalf("details mode misses columns: %+v", detailed)
+	}
+	if !strings.Contains(detailed.header(), "UPTIME") || strings.Contains(plain.header(), "UPTIME") {
+		t.Fatalf("headers = %q / %q", detailed.header(), plain.header())
+	}
+	// И: колонки DOCKER нет ни в одном режиме — счётчики ушли в сайдбар.
+	for _, cols := range []fleetColumns{plain, detailed} {
+		if strings.Contains(cols.header(), "DOCKER") {
+			t.Fatalf("колонка DOCKER осталась в таблице: %q", cols.header())
+		}
+	}
+	narrow := fleetColumnLayout(70, true)
+	// На 60 колонках уходит и UPTIME: DISK принадлежит базовому набору и остаётся.
+	tight := fleetColumnLayout(60, true)
+	if tight.uptime {
+		t.Fatalf("tight details layout = %+v", tight)
+	}
+	if !strings.Contains(tight.header(), "DISK") {
+		t.Fatalf("колонка DISK ушла вместе с деталями: %q", tight.header())
+	}
+	if narrow.name < fleetNameMin {
+		t.Fatalf("host column shrank below the minimum: %+v", narrow)
+	}
+}
+
+// columnEnd — на какой ячейке строки заканчивается value.
+func columnEnd(line, value string) int {
+	index := strings.Index(line, value)
+	if index < 0 {
+		return -1
+	}
+	return lipgloss.Width(line[:index+len(value)])
+}
+
+func TestFleetTableFillsPanelWidth(t *testing.T) {
+	// Given: список хостов на терминалах разной ширины, в обоих режимах колонок.
+	for _, width := range []int{60, 80, 100, 160, 200} {
+		for _, detailed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%d/%v", width, detailed), func(t *testing.T) {
+				cols := fleetColumnLayout(width, detailed)
+				if cols.fixed() > width {
+					// Ширины не хватает даже на минимум — зазоры базовые, поведение прежнее.
+					if cols.lead != fleetGapWidth || cols.inner != fleetGapWidth {
+						t.Fatalf("зазоры разъехались на тесной раскладке: %+v", cols)
+					}
+					return
+				}
+
+				// When: рисуются заголовок и строка хоста.
+				header := cols.header()
+				row := strings.Repeat(" ", len([]rune(fleetMarker))) +
+					// Значения ячеек различны нарочно: columnEnd ищет первое
+					// вхождение, и «96%» из колонки СОСТ перебило бы MEM.
+					cols.row("vm-prod-emarb", "⚠ память 96%", "2%", "94%", "88%", "0.79", "1718д")
+
+				// Then: обе строки ровно по ширине панели и колонки совпадают.
+				if got := lipgloss.Width(header); got != width {
+					t.Fatalf("заголовок в %d ячеек при ширине панели %d: %q", got, width, header)
+				}
+				if got := lipgloss.Width(row); got != width {
+					t.Fatalf("строка в %d ячеек при ширине панели %d: %q", got, width, row)
+				}
+				// Смещение считаем в ячейках, а не в байтах: в колонках кириллица.
+				for _, pair := range [][2]string{{"CPU", "2%"}, {"MEM", "94%"}, {"DISK", "88%"}, {"LOAD", "0.79"}} {
+					if columnEnd(header, pair[0]) != columnEnd(row, pair[1]) {
+						t.Fatalf("колонка %s не под своим заголовком:\n%s\n%s", pair[0], header, row)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestFleetNumericGapsGrowWithPanelWidth — Дано: одна и та же таблица на
+// панелях разной ширины; Тогда: интервалы между числовыми колонками растут
+// вместе с панелью, а не только отступ перед блоком чисел. Без этого числа
+// снова слиплись бы у правой рамки в «4%  51%  0.00».
+func TestFleetNumericGapsGrowWithPanelWidth(t *testing.T) {
+	narrow, wide := fleetColumnLayout(80, false), fleetColumnLayout(200, false)
+	if wide.inner <= narrow.inner {
+		t.Fatalf("зазор между числами не вырос: %d при 80 против %d при 200", narrow.inner, wide.inner)
+	}
+	if narrow.inner < fleetGapWidth {
+		t.Fatalf("зазор уже базового: %+v", narrow)
+	}
+	// И: разбег между зазорами не больше остатка от деления — блок чисел
+	// разложен равномерно, а не «дырка перед CPU и слипшийся хвост».
+	if wide.lead-wide.inner >= len(wide.numericWidths()) {
+		t.Fatalf("ширина ушла в один отступ: lead=%d inner=%d", wide.lead, wide.inner)
+	}
+}
+
+// TestFleetStateColumnGrowsOnWidePanels — Дано: хост с длинной формулировкой
+// проблемы; Когда: кадр отрисован на широком терминале; Тогда: состояние видно
+// целиком, а не «⚠ диск /shar…», при этом на 60–80 колонках колонка держит
+// прежние 13 ячеек и числа не слипаются.
+func TestFleetStateColumnGrowsOnWidePanels(t *testing.T) {
+	const msg = "диск /shares/video заполнен на 92%"
+	snapshot := collect.Snapshot{
+		Time:    time.Now(),
+		Servers: []collect.Metrics{{Name: "kava", Group: "main", Online: true, Time: time.Now()}},
+		Issues:  []collect.Issue{{Server: "kava", Severity: "warn", Msg: msg}},
+	}
+	for _, expanded := range []bool{false, true} {
+		t.Run(fmt.Sprintf("expanded=%v", expanded), func(t *testing.T) {
+			m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(200, 30)}
+			m.fleet.expanded = expanded
+			view := stripANSI(m.View())
+			// Правую колонку отрезаем: сайдбар печатает ту же формулировку, и
+			// без этого тест прошёл бы даже с обрезанной ячейкой списка.
+			list, _, _ := strings.Cut(fleetRowOf(t, view, "kava"), "│  │")
+			if !strings.Contains(list, msg) {
+				t.Fatalf("состояние обрезано на 200 колонках: %q", list)
+			}
+			for _, line := range strings.Split(view, "\n") {
+				if lipgloss.Width(line) > 200 {
+					t.Fatalf("строка кадра в %d ячеек при ширине 200: %q", lipgloss.Width(line), line)
+				}
+			}
+		})
+	}
+	// И: на узкой панели раздача ширины прежняя — СОСТ не растёт, зазор между
+	// числами остаётся больше базового.
+	for _, width := range []int{60, 80} {
+		cols := fleetColumnLayout(width, false)
+		if cols.state != fleetStateWidth {
+			t.Fatalf("колонка СОСТ выросла на %d колонках: %+v", width, cols)
+		}
+		if width == 80 && cols.inner <= fleetGapWidth {
+			t.Fatalf("числа слиплись на 80 колонках: %+v", cols)
+		}
+	}
+}
+
+// TestFleetDiskColumnPrefersRootPartition — Дано: хосты с разным набором
+// разделов; Тогда: в колонке DISK стоит «/», если он собран, иначе самый
+// заполненный раздел, а у offline-хоста — прочерк.
+func TestFleetDiskColumnPrefersRootPartition(t *testing.T) {
+	// Ширина 80: список в одну колонку без рамки и сайдбара, поэтому последние
+	// поля строки — это ровно ячейки DISK и LOAD.
+	for _, tc := range []struct {
+		name   string
+		online bool
+		disks  []collect.DiskUsage
+		want   string
+	}{
+		{"корень среди прочих", true, []collect.DiskUsage{{Mount: "/var", UsedPct: 97}, {Mount: "/", UsedPct: 41}, {Mount: "/boot", UsedPct: 12}}, "41%"},
+		{"корня нет", true, []collect.DiskUsage{{Mount: "/data", UsedPct: 63}, {Mount: "/srv", UsedPct: 88}}, "88%"},
+		{"дисков нет", true, nil, "—"},
+		{"нет связи", false, []collect.DiskUsage{{Mount: "/", UsedPct: 41}}, "—"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+				{Name: "kava", Group: "main", Online: tc.online, Time: time.Now(), Disks: tc.disks},
+			}}
+			m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(80, 24)}
+			view := stripANSI(m.View())
+			if !strings.Contains(view, "DISK") {
+				t.Fatalf("колонки DISK нет в списке:\n%s", view)
+			}
+			cols := strings.Fields(fleetRowOf(t, view, "kava"))
+			if got := cols[len(cols)-2]; got != tc.want {
+				t.Fatalf("колонка DISK = %q, want %q:\n%s", got, tc.want, view)
+			}
+		})
+	}
+}
+
+// TestFleetSidebarTellsDockerStates — Дано: хосты в разном состоянии docker'а;
+// Когда: хост выбран и виден сайдбар; Тогда: раздел DOCKER различает «не
+// ответил», «контейнеров нет» и живые счётчики теми же словами, что карточка,
+// а колонки DOCKER в таблице больше нет ни в одном режиме.
+func TestFleetSidebarTellsDockerStates(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		counts collect.DockerCounts
+		want   []string
+	}{
+		{"docker не ответил", collect.DockerCounts{}, []string{"docker недоступен"}},
+		{"контейнеров нет", collect.DockerCounts{Known: true}, []string{"контейнеров нет"}},
+		{"контейнеры есть", collect.DockerCounts{Running: 7, Stopped: 2, Broken: 1, Known: true},
+			[]string{"● 7 запущено", "○ 2 остановлено", "⚠ 1 проблемный"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+				{Name: "db", Group: "main", Online: true, Time: time.Now(), Docker: tc.counts},
+			}}
+			m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(200, 40)}
+			view := stripANSI(m.View())
+			if !strings.Contains(view, "DOCKER") {
+				t.Fatalf("раздела DOCKER нет в сайдбаре:\n%s", view)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(view, want) {
+					t.Fatalf("сайдбар не сказал %q:\n%s", want, view)
+				}
+			}
+			// И: счётчики стоят между «что не так» и «топом по памяти».
+			if issues, docker, top := strings.Index(view, "ЧТО НЕ ТАК"), strings.Index(view, "DOCKER"), strings.Index(view, "ТОП ПО ПАМЯТИ"); !(issues < docker && docker < top) {
+				t.Fatalf("порядок разделов сайдбара сбит: %d/%d/%d\n%s", issues, docker, top, view)
+			}
+		})
+	}
+	// И: в самой таблице колонки DOCKER нет даже в режиме деталей.
+	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+		{Name: "db", Group: "main", Online: true, Time: time.Now(), Docker: collect.DockerCounts{Running: 7, Known: true}},
+	}}
+	m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(80, 30)}
+	m, _ = updateModel(t, m, key("right"))
+	if view := stripANSI(m.View()); strings.Contains(view, "DOCKER") {
+		t.Fatalf("колонка DOCKER осталась в таблице:\n%s", view)
+	}
+}
+
+// fleetRowOf возвращает строку списка, в которой стоит имя хоста. Рамки
+// пропускаются: заголовок панели сайдбара тоже подписан именем хоста.
+func fleetRowOf(t *testing.T, view, name string) string {
+	t.Helper()
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, name+" ") && !strings.ContainsAny(line, "╭╰") {
+			return line
+		}
+	}
+	t.Fatalf("строка хоста %q не найдена:\n%s", name, view)
+	return ""
+}
+
+func TestFleetTableKeepsNumbersAtTheRightEdge(t *testing.T) {
+	// Given: широкий терминал с сайдбаром — тот случай из скриншота, где таблица
+	// жалась к левому краю панели «СЕРВЕРЫ».
+	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+		{Name: "kava", Group: "main", Online: true, Time: time.Now(), CPUPct: 4, MemPct: 52, Load1: 0.12},
+	}}
+	m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(200, 30)}
+
+	// When: кадр отрисован.
+	view := m.View()
+
+	// Then: строка хоста заканчивается своим последним числом вплотную к рамке.
+	var row string
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "kava") {
+			row = line
+		}
+	}
+	if row == "" {
+		t.Fatalf("строка хоста не найдена:\n%s", view)
+	}
+	if !strings.Contains(stripANSI(row), "0.12 │") {
+		t.Fatalf("числа не дошли до правого края панели: %q", stripANSI(row))
+	}
+}
+
+// TestFleetCardBarsAreFramedAndAligned — Дано: раскрытая карточка с тремя
+// шкалами подряд; Тогда: у каждой своя рамка и все три начинаются и кончаются
+// в одной колонке — без этого cpu/mem/disk читались как один прямоугольник.
+func TestFleetCardBarsAreFramedAndAligned(t *testing.T) {
+	server := collect.Metrics{
+		Name: "kava", Online: true, Time: time.Now(), Hostname: "kava-claw", NumCPU: 2,
+		CPUPct: 4, MemPct: 51, MemTotalKB: 3800000, MemAvailKB: 1800000,
+		Disks: []collect.DiskUsage{{Mount: "/", TotalKB: 28000000, UsedKB: 25800000, UsedPct: 92}},
+	}
+	m := Model{screen: screenFleet, fleet: newFleetModel()}
+	for _, width := range []int{60, 100, 160} {
+		t.Run(strconv.Itoa(width), func(t *testing.T) {
+			var opens, closes []int
+			for _, line := range m.fleetCardLines(server, width) {
+				plain := stripANSI(line)
+				for _, label := range []string{"cpu", "mem", "disk"} {
+					if !strings.Contains(plain, label+" ") || !strings.Contains(plain, "[") {
+						continue
+					}
+					opens = append(opens, columnEnd(plain, "["))
+					closes = append(closes, columnEnd(plain, "]"))
+				}
+			}
+			if len(opens) != 3 {
+				t.Fatalf("обрамлены не все три шкалы: %v", opens)
+			}
+			for i := 1; i < 3; i++ {
+				if opens[i] != opens[0] || closes[i] != closes[0] {
+					t.Fatalf("шкалы разъехались: начала %v, концы %v", opens, closes)
+				}
+			}
+		})
+	}
+}
+
+func TestFleetTopMemorySurvivesLiveProcessOutput(t *testing.T) {
+	// Given: сайдбар флота, ждущий ответа `ps`.
+	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+		{Name: "kava", Group: "main", Online: true, Time: time.Now(), MemTotalKB: 8 * 1024 * 1024},
+	}}
+	m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(140, 30)}
+	m.processes.generation, m.processes.status = 7, diagnosticsLoading
+
+	// When: приходит вывод живого хоста — в нём виден шелл нашей же команды с
+	// маркером «утилиты нет» в аргументах.
+	raw := " 28841  0.0  0.0 sh -c command -v ps >/dev/null 2>&1 || { echo __SSHMON_UNSUPPORTED__; exit 0; }; ps -eo pid=,pcpu=,pmem=,args=\n" +
+		" 28842  0.5  9.4 /usr/bin/java -jar app.jar\n"
+	items, err := collect.ParseProcesses(raw)
+	if err != nil {
+		t.Fatalf("вывод живого ps признан неподдерживаемым: %v", err)
+	}
+	loaded, _ := updateModel(t, m, processesResultMsg{generation: 7, items: items})
+
+	// Then: раздел показывает процесс, а не «ps недоступен».
+	view := loaded.View()
+	if !strings.Contains(view, "java") {
+		t.Fatalf("сайдбар не показал топ по памяти:\n%s", view)
+	}
+	for _, unwanted := range []string{"ps недоступен", "нет данных"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("сайдбар показал %q при живых данных:\n%s", unwanted, view)
+		}
+	}
+}
+
+func TestFleetTopMemoryNamesTheReasonInsteadOfNoData(t *testing.T) {
+	// Given: сайдбар флота, чей запрос `ps` сорвался по связи.
+	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+		{Name: "kava", Group: "main", Online: true, Time: time.Now()},
+	}}
+	m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(140, 30)}
+	m.processes.generation, m.processes.status = 7, diagnosticsLoading
+
+	// When: приходит ответ с ошибкой.
+	failed, _ := updateModel(t, m, processesResultMsg{generation: 7, err: errors.New("канал закрыт")})
+
+	// Then: в разделе видна причина, а не «нет данных», которое читается как
+	// «на хосте нет процессов».
+	view := failed.View()
+	if !strings.Contains(view, "канал закрыт") || strings.Contains(view, "нет данных") {
+		t.Fatalf("причина отказа ps не видна:\n%s", view)
 	}
 }
 
@@ -95,6 +517,77 @@ func TestFleetWideDrawsTwoBorderedColumns(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("wide fleet missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestFleetKeepsHostListVisibleUnderTheLogDrawer(t *testing.T) {
+	// Given: экран флота с группой хостов и открытым ящиком логов на низком
+	// терминале — сумма шапки, плиток, ящика и списка в высоту не влезает.
+	for _, height := range []int{16, 20} {
+		t.Run(strconv.Itoa(height), func(t *testing.T) {
+			streamer := &fakeLogStreamer{streams: []collect.LogStream{{
+				Lines:  make(chan string, 1),
+				Errors: make(chan error, 1),
+				Close:  func() error { return nil },
+			}}}
+			m := Model{
+				screen: screenFleet,
+				snapshot: collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+					{Name: "web", Group: "prod", Online: true, Time: time.Now()},
+					{Name: "db", Group: "prod", Online: true, Time: time.Now()},
+					{Name: "cache", Group: "prod", Online: true, Time: time.Now()},
+				}},
+				logSource: streamer,
+				logs:      newLogsScreen(),
+				fleet:     newFleetModel(),
+			}
+			m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 100, Height: height})
+			m, _ = updateModel(t, m, key("l"))
+			for i := range 8 {
+				m.logs.buffer.Append(fmt.Sprintf("19:41:0%d info строка", i))
+			}
+
+			// When: кадр отрисован.
+			view := m.View()
+
+			// Then: на экране остались и ящик, и строка списка, а кадр ровно по
+			// высоте терминала.
+			if lines := strings.Split(view, "\n"); len(lines) != height {
+				t.Fatalf("кадр в %d строк при высоте терминала %d:\n%s", len(lines), height, view)
+			}
+			if !strings.Contains(view, "ЛОГИ · web") {
+				t.Fatalf("ящик логов пропал из кадра:\n%s", view)
+			}
+			if !strings.Contains(view, fleetMarker) {
+				t.Fatalf("под ящиком не осталось ни одной строки списка:\n%s", view)
+			}
+		})
+	}
+}
+
+func TestFleetSingleColumnScrollsToTheSelectedRow(t *testing.T) {
+	// Given: 28 хостов на терминале, где список в одну колонку и не помещается.
+	servers := make([]collect.Metrics, 0, 28)
+	for i := range 28 {
+		servers = append(servers, collect.Metrics{Name: fmt.Sprintf("host-%02d", i), Online: true, Time: time.Now()})
+	}
+	m := Model{
+		screen:   screenFleet,
+		snapshot: collect.Snapshot{Time: time.Now(), Servers: servers},
+		fleet:    newFleetModel(),
+		selected: 27,
+	}
+	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	// When: кадр отрисован.
+	view := m.View()
+
+	// Then: список прокручен к выделенной строке, а кадр по высоте терминала.
+	if lines := strings.Split(view, "\n"); len(lines) != 24 {
+		t.Fatalf("кадр в %d строк при высоте терминала 24:\n%s", len(lines), view)
+	}
+	if !strings.Contains(view, "host-27") || !strings.Contains(view, fleetMarker) {
+		t.Fatalf("выделенная строка уехала за нижний край:\n%s", view)
 	}
 }
 

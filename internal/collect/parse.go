@@ -18,7 +18,16 @@ const sampleCmd = `echo @@HOST; hostname 2>/dev/null; ` +
 	`echo @@NET; cat /proc/net/dev; ` +
 	`echo @@DF; df -kP 2>/dev/null; ` +
 	`echo @@PORTS; ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null; ` +
-	`echo @@DOCKER; docker ps -a --format '{{.Status}}' 2>/dev/null`
+	// `command -v docker` и маркер, как в diagnostics.go: без них пустой ответ
+	// от хоста без docker'а неотличим от «контейнеров нет». Ветка `|| echo`
+	// ловит и отказ самого docker'а (нет прав, демон молчит) — там счётчиков
+	// тоже нет. Заодно последняя команда сэмпла всегда выходит с нулём.
+	`echo @@DOCKER; command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Status}}' 2>/dev/null || echo ` + unsupportedMarker
+
+// sampleCmdWithOS — тот же сэмпл плюс /etc/os-release. Шлём его один раз на
+// сервер: дистрибутив не меняется, а лишний cat на каждом тике не нужен — в том
+// числе там, где файла нет вовсе. Обе команды — константы, подстановки в них нет.
+const sampleCmdWithOS = sampleCmd + `; echo @@OS; cat /etc/os-release 2>/dev/null`
 
 // counters — сырые счётчики одного сэмпла; скорости считаются по двум сэмплам.
 type counters struct {
@@ -35,6 +44,7 @@ type counters struct {
 type sample struct {
 	c        counters
 	hostname string
+	os       string
 	uptime   time.Duration
 	load1    float64
 	load5    float64
@@ -74,7 +84,10 @@ func parseSample(raw string, at time.Time) *sample {
 	s.c.netRx, s.c.netTx = map[string]uint64{}, map[string]uint64{}
 
 	if h := sec["HOST"]; len(h) > 0 {
-		s.hostname = strings.TrimSpace(h[0])
+		// Всё, что ниже приходит из вывода команд на удалённом хосте и попадает
+		// на экран как текст: имя хоста, дистрибутив, имена ФС, точек монтирования,
+		// дисков и интерфейсов. Чистим на разборе — дальше это уже данные модели.
+		s.hostname = SanitizeLine(strings.TrimSpace(h[0]))
 	}
 	if u := sec["UP"]; len(u) > 0 {
 		if f := strings.Fields(u[0]); len(f) > 0 {
@@ -141,7 +154,7 @@ func parseSample(raw string, at time.Time) *sample {
 		if len(f) < 10 {
 			continue
 		}
-		name := f[2]
+		name := SanitizeLine(f[2])
 		if strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "ram") ||
 			strings.HasPrefix(name, "zram") || strings.HasPrefix(name, "dm-") ||
 			partRe.MatchString(name) {
@@ -156,7 +169,7 @@ func parseSample(raw string, at time.Time) *sample {
 			continue
 		}
 		parts := strings.SplitN(ln, ":", 2)
-		iface := strings.TrimSpace(parts[0])
+		iface := SanitizeLine(strings.TrimSpace(parts[0]))
 		if iface == "lo" {
 			continue
 		}
@@ -180,18 +193,46 @@ func parseSample(raw string, at time.Time) *sample {
 			continue
 		}
 		s.disks = append(s.disks, DiskUsage{
-			Fs: f[0], Mount: f[5],
+			Fs: SanitizeLine(f[0]), Mount: SanitizeLine(f[5]),
 			TotalKB: total, UsedKB: used, AvailKB: avail,
 			UsedPct: 100 * float64(used) / float64(total),
 		})
 	}
+	s.os = SanitizeLine(parseOSRelease(sec["OS"]))
 	s.ports, _ = ParsePorts(strings.Join(sec["PORTS"], "\n"))
-	for _, ln := range sec["DOCKER"] {
-		if ln = strings.TrimSpace(ln); ln != "" {
-			s.docker.CountContainerStatus(ln)
+	// Секцию читаем только целиком: её отсутствие (оборванный вывод, хост со
+	// старой версией команды) — это «неизвестно», а не «контейнеров нет».
+	if lines, ok := sec["DOCKER"]; ok && !hasUnsupportedMarker(strings.Join(lines, "\n")) {
+		s.docker.Known = true
+		for _, ln := range lines {
+			if ln = strings.TrimSpace(ln); ln != "" {
+				s.docker.CountContainerStatus(ln)
+			}
 		}
 	}
 	return s
+}
+
+// parseOSRelease собирает короткое имя дистрибутива из /etc/os-release:
+// «ID VERSION_ID» («debian 12»), а если версии нет — PRETTY_NAME.
+func parseOSRelease(lines []string) string {
+	fields := make(map[string]string, len(lines))
+	for _, ln := range lines {
+		key, value, ok := strings.Cut(strings.TrimSpace(ln), "=")
+		if !ok {
+			continue
+		}
+		fields[key] = strings.Trim(value, `"'`)
+	}
+	id, version := fields["ID"], fields["VERSION_ID"]
+	switch {
+	case id != "" && version != "":
+		return id + " " + version
+	case fields["PRETTY_NAME"] != "":
+		return fields["PRETTY_NAME"]
+	default:
+		return id
+	}
 }
 
 // rates считает скорости по дельтам двух сэмплов.

@@ -10,15 +10,16 @@ import (
 
 func TestLayoutContractsAtSupportedSizes(t *testing.T) {
 	tests := []struct {
-		name    string
-		width   int
-		height  int
-		wide    bool
-		message string
+		name      string
+		width     int
+		height    int
+		tooSmall  bool
+		twoColumn bool
+		message   string
 	}{
-		{"too small", 59, 15, false, "увеличьте терминал"},
-		{"minimum fleet", 60, 16, false, ""},
-		{"wide fleet", 120, 30, true, ""},
+		{"too small", 59, 15, true, false, "увеличьте терминал"},
+		{"minimum fleet", 60, 16, false, false, ""},
+		{"two column fleet", 120, 30, false, true, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -26,9 +27,12 @@ func TestLayoutContractsAtSupportedSizes(t *testing.T) {
 			m := Model{screen: screenFleet, snapshot: snapshotWithServers("web")}
 			// When Bubble Tea reports the window size.
 			m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: tt.width, Height: tt.height})
-			// Then the adaptive contract and resize message are deterministic.
-			if m.layout.wide != tt.wide {
-				t.Fatalf("wide = %v, want %v", m.layout.wide, tt.wide)
+			// Then the layout keeps the raw terminal size and its column contract.
+			if m.layout.tooSmall != tt.tooSmall || m.layout.twoColumn() != tt.twoColumn {
+				t.Fatalf("tooSmall=%v twoColumn=%v, want %v/%v", m.layout.tooSmall, m.layout.twoColumn(), tt.tooSmall, tt.twoColumn)
+			}
+			if m.layout.width != tt.width || m.layout.height != tt.height {
+				t.Fatalf("layout = %dx%d, want %dx%d (внешней рамки нет)", m.layout.width, m.layout.height, tt.width, tt.height)
 			}
 			if tt.message != "" && !strings.Contains(m.View(), tt.message) {
 				t.Fatalf("view = %q", m.View())

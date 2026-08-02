@@ -44,6 +44,10 @@ type dashboardLogState struct {
 }
 
 type dashboardWorkspace struct {
+	// server — хост, для которого загружены юниты, контейнеры и лог. Без него
+	// список источников логов брал бы юниты и контейнеры прошлого сервера:
+	// журнал чужого юнита пуст, чужой контейнер отвечает ошибкой.
+	server      string
 	containers  dashboardContainersState
 	units       dashboardUnitsState
 	logs        dashboardLogState
@@ -76,6 +80,7 @@ func (m *Model) startDashboardWorkspace() tea.Cmd {
 	m.dashboard.tileFocus = tileSystemd
 	m.dashboard.tileScrolls = [numDashboardTiles]int{}
 	server := m.selectedName()
+	m.dashboard.server = server
 	configured := []string(nil)
 	if m.config != nil {
 		configured = slices.Clone(m.config.Dashboard.SystemdUnits)
@@ -115,6 +120,9 @@ func (m *Model) startDashboardLog(source collect.LogSource) tea.Cmd {
 	return m.loadDashboardLog(ctx, generation, collect.NewLogRequest(m.selectedName(), source))
 }
 
+// cancelDashboardWorkspace снимает только запросы: m.dashboard.server не
+// обнуляем — уже загруженные юниты и контейнеры остаются данными того же хоста
+// и после возврата к списку, и обнуление лишь потеряло бы источники логов.
 func (m *Model) cancelDashboardWorkspace() {
 	for _, cancel := range []context.CancelFunc{m.dashboard.containers.cancel, m.dashboard.units.cancel, m.dashboard.logs.cancel} {
 		if cancel != nil {

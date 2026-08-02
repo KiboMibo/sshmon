@@ -100,13 +100,18 @@ func (m *Model) startDiagnostics() tea.Cmd {
 	return runDiagnostics(ctx, generation, m.screen, m.selectedName(), m.collector)
 }
 
+// cancelDiagnostics снимает все виды диагностики, а не только текущий экран:
+// палитра успевает переставить m.screen до отмены, и контекст прошлого вида
+// иначе не отменялся никогда — SSH-команда доигрывала до конца.
 func (m *Model) cancelDiagnostics() {
-	d := m.diagnosticsFor(m.screen)
-	if d == nil || d.cancel == nil {
-		return
+	for _, kind := range []screenKind{screenProcesses, screenPorts, screenContainers} {
+		d := m.diagnosticsFor(kind)
+		if d == nil || d.cancel == nil {
+			continue
+		}
+		d.cancel()
+		d.cancel = nil
 	}
-	d.cancel()
-	d.cancel = nil
 }
 
 func runDiagnostics(ctx context.Context, generation uint64, kind screenKind, server string, collector *collect.Collector) tea.Cmd {
@@ -174,9 +179,9 @@ func diagnosticsFooter(status diagnosticsStatus, err error) string {
 	case diagnosticsUnsupported:
 		return "не поддерживается на сервере · esc назад"
 	case diagnosticsStale:
-		return "устаревшие данные: " + err.Error() + " · esc назад"
+		return "устаревшие данные: " + errText(err) + " · esc назад"
 	case diagnosticsError:
-		return "ошибка: " + err.Error() + " · esc назад"
+		return "ошибка: " + errText(err) + " · esc назад"
 	default:
 		return "только чтение · esc назад"
 	}

@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-
-	"github.com/kibomibo/sshmon/internal/sshx"
 )
 
 type LogSourceKind string
@@ -40,16 +38,29 @@ func NewLogRequest(server string, source LogSource) LogRequest {
 	return LogRequest{ID: nextLogRequestID(), Server: server, Source: source}
 }
 
-func (c *Collector) StreamLogs(ctx context.Context, request LogRequest) (sshx.Stream, error) {
+// LogStream — поток строк лога, не зависящий от транспорта. Поля повторяют
+// sshx.Stream, но тип объявлен здесь: экраны TUI работают с логами через
+// collect и не должны знать, что под ними SSH-сессия.
+type LogStream struct {
+	Lines  <-chan string
+	Errors <-chan error
+	Close  func() error
+}
+
+func (c *Collector) StreamLogs(ctx context.Context, request LogRequest) (LogStream, error) {
 	client, err := c.clientFor(request.Server)
 	if err != nil {
-		return sshx.Stream{}, err
+		return LogStream{}, err
 	}
 	command, err := c.logCommand(ctx, request)
 	if err != nil {
-		return sshx.Stream{}, err
+		return LogStream{}, err
 	}
-	return client.StreamContext(ctx, command)
+	stream, err := client.StreamContext(ctx, command)
+	if err != nil {
+		return LogStream{}, err
+	}
+	return LogStream{Lines: stream.Lines, Errors: stream.Errors, Close: stream.Close}, nil
 }
 
 var safeLogName = regexp.MustCompile(`^[A-Za-z0-9_.@:-]+$`)
@@ -107,7 +118,9 @@ func (c *Collector) LogSnapshot(ctx context.Context, request LogRequest, lines i
 	if trimmed == "" {
 		return nil, nil
 	}
-	return strings.Split(trimmed, "\n"), nil
+	// Снимок минует LogBuffer (его показывает плитка логов на экране сервера),
+	// поэтому чистим здесь.
+	return sanitizeFields(strings.Split(trimmed, "\n")), nil
 }
 
 func (c *Collector) logSnapshotCommand(ctx context.Context, request LogRequest, lines int) (string, error) {
@@ -138,9 +151,14 @@ type LogBuffer struct {
 	mu       sync.RWMutex
 	maxLines int
 	lines    []string
+	start    int // индекс первой актуальной строки в lines
 	paused   bool
 	frozen   []string
 	filter   string
+	// version растёт на каждое изменение видимого содержимого. Экран логов
+	// спрашивает Visible() по нескольку раз за кадр, а буфер держит до 10 000
+	// строк: по версии он понимает, что пересчитывать нечего.
+	version uint64
 }
 
 func NewLogBuffer(maxLines int) *LogBuffer {
@@ -150,20 +168,55 @@ func NewLogBuffer(maxLines int) *LogBuffer {
 	return &LogBuffer{maxLines: maxLines}
 }
 
+// Append укладывает строку в буфер. Здесь же — граница доверия: строка пришла с
+// удалённого хоста, и дальше её увидят и экран логов, и ящик логов флота, и
+// буфер обмена по «y». Чистим один раз на входе, а не в каждом из них.
 func (b *LogBuffer) Append(line string) {
+	line = SanitizeLine(line)
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.version++
 	b.lines = append(b.lines, line)
-	if excess := len(b.lines) - b.maxLines; excess > 0 {
-		b.lines = append([]string(nil), b.lines[excess:]...)
+	if len(b.lines)-b.start > b.maxLines {
+		b.start++
 	}
+	// Сдвиг пачкой, а не на каждой строке: при живом `journalctl -f` копирование
+	// всего буфера на каждую строку было O(n) на строку. Один сдвиг на maxLines
+	// вставок даёт амортизированное O(1); цена — до 2×maxLines заголовков строк.
+	if b.start >= b.maxLines {
+		kept := copy(b.lines, b.lines[b.start:])
+		clear(b.lines[kept:]) // хвост держал бы ссылки на уже выброшенные строки
+		b.lines = b.lines[:kept]
+		b.start = 0
+	}
+}
+
+// window — актуальные строки буфера в хронологическом порядке (только под mu).
+func (b *LogBuffer) window() []string {
+	if b.paused {
+		return b.frozen
+	}
+	return b.lines[b.start:]
+}
+
+// Reset очищает накопленные строки. Буфер переиспользуют при смене хоста или
+// источника, и строки прежнего потока не должны оставаться под новым заголовком.
+// Пауза и фильтр — состояние экрана, а не потока, поэтому сохраняются.
+func (b *LogBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.version++
+	b.lines = nil
+	b.start = 0
+	b.frozen = nil
 }
 
 func (b *LogBuffer) SetPaused(paused bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.version++
 	if paused && !b.paused {
-		b.frozen = append([]string(nil), b.lines...)
+		b.frozen = append([]string(nil), b.lines[b.start:]...)
 	}
 	if !paused {
 		b.frozen = nil
@@ -173,26 +226,29 @@ func (b *LogBuffer) SetPaused(paused bool) {
 
 func (b *LogBuffer) SetFilter(filter string) {
 	b.mu.Lock()
+	b.version++
 	b.filter = strings.ToLower(filter)
 	b.mu.Unlock()
+}
+
+// Version — счётчик изменений видимого содержимого: строк, фильтра и паузы.
+// Одинаковое значение гарантирует, что Visible() вернёт то же самое.
+func (b *LogBuffer) Version() uint64 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.version
 }
 
 func (b *LogBuffer) Total() int {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	if b.paused {
-		return len(b.frozen)
-	}
-	return len(b.lines)
+	return len(b.window())
 }
 
 func (b *LogBuffer) Visible() []string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	lines := b.lines
-	if b.paused {
-		lines = b.frozen
-	}
+	lines := b.window()
 	if b.filter == "" {
 		return append([]string(nil), lines...)
 	}

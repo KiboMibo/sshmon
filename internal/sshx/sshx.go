@@ -145,12 +145,20 @@ func (c *Client) RunContext(ctx context.Context, cmd string) (string, error) {
 		c.drop()
 		return "", err
 	}
+	// Закрытие сессии здесь же разблокирует горутину runCommand, если основной
+	// путь вернулся по отмене контекста: Output() на закрытой сессии сразу отдаёт
+	// ошибку в буферизованный канал и горутина завершается.
 	defer sess.Close()
-	out, err := runCommand(ctx, func() ([]byte, error) { return sess.Output(cmd) }, c.drop)
-	if err != nil {
-		if len(out) > 0 {
-			return string(out), nil
-		}
+	return commandOutput(runCommand(ctx, func() ([]byte, error) { return sess.Output(cmd) }, c.drop))
+}
+
+// commandOutput решает, считать ли вывод завершившейся команды успехом.
+// Ненулевой код возврата с непустым выводом — успех: на нём держатся цепочки
+// `journalctl || tail syslog`. Транспортная ошибка — нет: вывод оборван на
+// середине, и сборщик записал бы обрезанный сэмпл как успешный, с мусорными
+// дельтами по счётчикам.
+func commandOutput(out []byte, err error) (string, error) {
+	if err != nil && (len(out) == 0 || isTransportFailure(err)) {
 		return "", err
 	}
 	return string(out), nil
@@ -161,6 +169,19 @@ type commandResult struct {
 	err error
 }
 
+// runCommand ждёт результат команды или отмену контекста.
+//
+// При отмене соединение не рвётся: ssh.Client общий со сборщиком метрик, и выход
+// из экрана «Процессы» не должен стоить всему приложению нового handshake.
+// Схема безопасна, потому что горутина output() и вызывающий не разделяют ничего,
+// кроме буферизованного на 1 канала: вызывающий закрывает свою ssh.Session
+// (defer sess.Close() в RunContext) сразу после возврата, Output() на закрытой
+// сессии возвращает ошибку, горутина кладёт её в канал, который никто уже не
+// читает, и завершается — ни записи в закрытую сессию, ни утечки. Сама
+// ssh.Session допускает Close() параллельно с выполняющимся Output().
+//
+// drop() остаётся только для реальных транспортных ошибок: иначе мёртвый
+// ssh.Client остался бы в кэше и все последующие опросы падали бы на нём.
 func runCommand(ctx context.Context, output func() ([]byte, error), drop func()) ([]byte, error) {
 	result := make(chan commandResult, 1)
 	go func() {
@@ -169,11 +190,24 @@ func runCommand(ctx context.Context, output func() ([]byte, error), drop func())
 	}()
 	select {
 	case res := <-result:
+		if isTransportFailure(res.err) {
+			drop()
+		}
 		return res.out, res.err
 	case <-ctx.Done():
-		drop()
 		return nil, ctx.Err()
 	}
+}
+
+// isTransportFailure отличает поломку соединения от штатного завершения удалённой
+// команды. Ненулевой код возврата — обычное дело для цепочек `a || b` в наших
+// командах и не повод закрывать ssh.Client, которым пользуются другие экраны.
+func isTransportFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var exitErr *ssh.ExitError
+	return !errors.As(err, &exitErr)
 }
 
 func authMethods(cfg config.Server, passphrase []byte) ([]ssh.AuthMethod, bool, func(), error) {

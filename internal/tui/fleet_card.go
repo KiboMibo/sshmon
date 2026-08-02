@@ -11,7 +11,10 @@ func (m Model) fleetCardLines(server collect.Metrics, width int) []string {
 	inner := max(20, width-4)
 	content := []string{fleetCardSummary(server)}
 	content = append(content, m.fleetCardBody(server, inner)...)
-	content = append(content, dimStyle.Render("[l] логи  [p] процессы  [o] порты  [d] контейнеры  [x] ssh  [←] свернуть"))
+	// fitLine и здесь: рядом с карточкой теперь остаётся сайдбар, левая колонка
+	// уже, и полный список подсказок в неё не влезает — его надо ужать, а не
+	// дать рамке съесть хвост.
+	content = append(content, dimStyle.Render(fitLine("[l] логи  [p] процессы  [o] порты  [d] контейнеры  [x] ssh  [←] свернуть", inner)))
 	return panelBoxStyled("", "", width, content, dimStyle)
 }
 
@@ -21,7 +24,7 @@ func fleetCardSummary(server collect.Metrics) string {
 		parts = append(parts, server.Hostname)
 	}
 	if server.NumCPU > 0 {
-		parts = append(parts, fmt.Sprintf("%d ядер", server.NumCPU))
+		parts = append(parts, coresText(server.NumCPU))
 	}
 	if server.MemTotalKB > 0 {
 		parts = append(parts, byteValue(float64(server.MemTotalKB)*1024))
@@ -51,7 +54,7 @@ func (m Model) fleetCardBody(server collect.Metrics, width int) []string {
 		lines = append(lines, fmt.Sprintf("%-7s %s", "net", net))
 	}
 	lines = append(lines, fmt.Sprintf("%-7s %s", "srv", m.servicesText()))
-	lines = append(lines, fmt.Sprintf("%-7s %s", "docker", dockerText(server.Docker)))
+	lines = append(lines, fmt.Sprintf("%-7s %s", "docker", m.dockerText(server)))
 	lines = append(lines, fmt.Sprintf("%-7s %s", "порты", portsTail(server.Ports)))
 	for i, line := range lines {
 		lines[i] = fitLine(line, width)
@@ -77,6 +80,20 @@ func memoryTail(server collect.Metrics) string {
 		tail += "  swap " + byteValue(swap) + " / " + byteValue(float64(server.SwapTotalKB)*1024)
 	}
 	return tail
+}
+
+// rootDiskUsage — значение колонки DISK: корень, если он есть в собранных
+// данных, иначе самый заполненный раздел. Разделов на хосте бывает десяток, и
+// спрашивают обычно про «/»; когда его в df нет (контейнер, отдельный
+// дата-хост), показываем тот, что кончится первым. Раздел, переваливший порог,
+// всё равно назовёт себя по имени в колонке СОСТ.
+func rootDiskUsage(disks []collect.DiskUsage) (collect.DiskUsage, bool) {
+	for _, disk := range disks {
+		if disk.Mount == "/" {
+			return disk, true
+		}
+	}
+	return busiestDisk(disks)
 }
 
 func busiestDisk(disks []collect.DiskUsage) (collect.DiskUsage, bool) {
@@ -112,18 +129,49 @@ func netTail(rates []collect.NetRate) string {
 	return "rx " + byteValue(rx) + "/s  tx " + byteValue(tx) + "/s"
 }
 
-func dockerText(d collect.DockerCounts) string {
+func (m Model) dockerText(server collect.Metrics) string {
+	parts := dockerCountParts(server.Docker)
+	if len(parts) == 0 {
+		return dimStyle.Render(m.dockerEmptyText(server))
+	}
+	return strings.Join(parts, "  ")
+}
+
+// dockerCountParts — счётчики контейнеров по одной формулировке на часть.
+// Отдельно от dockerText, потому что сайдбар флота ставит те же счётчики
+// строкой на каждый: в колонку шириной с четверть экрана они одной строкой не
+// влезают, а вторая формулировка тех же чисел разошлась бы с карточкой.
+// Пустой результат означает «считать нечего» — причину назовёт dockerEmptyText.
+func dockerCountParts(d collect.DockerCounts) []string {
 	if d.Total() == 0 {
-		return dimStyle.Render("контейнеров нет")
+		return nil
 	}
 	parts := []string{goodStyle.Render(fmt.Sprintf("● %d запущено", d.Running))}
 	if d.Stopped > 0 {
 		parts = append(parts, dimStyle.Render(fmt.Sprintf("○ %d остановлено", d.Stopped)))
 	}
 	if d.Broken > 0 {
-		parts = append(parts, warnStyle.Render(fmt.Sprintf("⚠ %d проблемных", d.Broken)))
+		parts = append(parts, warnStyle.Render(fmt.Sprintf("⚠ %d %s", d.Broken, plural(d.Broken, "проблемный", "проблемных", "проблемных"))))
 	}
-	return strings.Join(parts, "  ")
+	return parts
+}
+
+// dockerEmptyText — почему в карточке не видно ни одного контейнера. Точную
+// причину («нет прав», «демон не отвечает») знает только диагностика экрана
+// сервера — её текст берём первым, если она про этот же хост, иначе два экрана
+// про один хост рассказывают разное. Для остальных хостов остаётся факт из
+// сэмпла: он различает «docker не ответил» и «контейнеров нет», а формулировки
+// те же, что у dockerStateText.
+func (m Model) dockerEmptyText(server collect.Metrics) string {
+	if m.dashboard.server == server.Name && m.dashboard.containers.status != diagnosticsIdle {
+		return dockerStateText(m.dashboard.containers)
+	}
+	if !server.Docker.Known {
+		// Не «не установлен»: сэмпл глушит stderr и не отличает отсутствие
+		// docker'а от отказа в правах. Разделяет их только диагностика выше.
+		return "docker недоступен"
+	}
+	return "контейнеров нет"
 }
 
 func portsTail(ports []collect.Port) string {
@@ -194,7 +242,7 @@ func containerCounts(items []collect.Container) string {
 		parts = append(parts, dimStyle.Render(fmt.Sprintf("○ %d остановлено", exited)))
 	}
 	if other > 0 {
-		parts = append(parts, warnStyle.Render(fmt.Sprintf("⚠ %d проблемных", other)))
+		parts = append(parts, warnStyle.Render(fmt.Sprintf("⚠ %d %s", other, plural(other, "проблемный", "проблемных", "проблемных"))))
 	}
 	return strings.Join(parts, "  ")
 }

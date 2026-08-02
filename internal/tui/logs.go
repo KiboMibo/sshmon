@@ -2,23 +2,34 @@ package tui
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kibomibo/sshmon/internal/collect"
-	"github.com/kibomibo/sshmon/internal/sshx"
 )
 
 type logStreamer interface {
-	StreamLogs(context.Context, collect.LogRequest) (sshx.Stream, error)
+	StreamLogs(context.Context, collect.LogRequest) (collect.LogStream, error)
 }
+
+// logSelectionStyle — фон выделенной строки. Маркер «▍» слева рисуется всегда:
+// на монохромном терминале фон не виден, а выделение по макету обязано читаться.
+var logSelectionStyle = lipgloss.NewStyle().Background(lipgloss.Color("236"))
+
+// logsContextRadius — сколько строк показывать вокруг выделенной по клавише «c».
+const logsContextRadius = 5
 
 type logsScreen struct {
 	buffer      *collect.LogBuffer
@@ -32,15 +43,38 @@ type logsScreen struct {
 	err         error
 	generation  uint64
 	cancel      context.CancelFunc
-	stream      sshx.Stream
+	stream      collect.LogStream
 	viewport    viewport.Model
 	ready       bool
 	lastLineAt  time.Time
+	// cursor — индекс выделенной строки в теле экрана; -1 значит «выделения нет»,
+	// и тогда экран следует за хвостом потока.
+	cursor int
+	// context — снимок окрестности выделенной строки без учёта фильтра;
+	// nil означает, что режим контекста выключен.
+	contextLines []string
+	// hideTime — колонка времени скрыта клавишей «t».
+	hideTime bool
+	// notice — короткое подтверждение действия («строка скопирована»), живёт
+	// до следующего нажатия клавиши.
+	notice string
+	// visible — кэш отфильтрованных строк. За один кадр их спрашивают тело
+	// экрана, счётчик строк и полоса плотности, а буфер держит до 10 000 строк
+	// и пополняется на каждую строку живого потока.
+	visible    []string
+	visibleKey logsVisibleKey
+}
+
+// logsVisibleKey — всё, от чего зависит выборка visibleLines: содержимое буфера
+// вместе с его фильтром (версия буфера) и уровень экрана.
+type logsVisibleKey struct {
+	version uint64
+	level   logLevel
 }
 
 type logsOpenedMsg struct {
 	generation uint64
-	stream     sshx.Stream
+	stream     collect.LogStream
 	err        error
 }
 
@@ -61,6 +95,7 @@ func newLogsScreen() logsScreen {
 		buffer:      collect.NewLogBuffer(10_000),
 		sources:     []collect.LogSource{{Kind: collect.LogSystem}},
 		filterInput: input,
+		cursor:      -1,
 	}
 }
 
@@ -71,6 +106,9 @@ func (l *logsScreen) ensure() {
 	initialized := newLogsScreen()
 	if l.buffer == nil {
 		l.buffer = initialized.buffer
+		// Зеро-значение экрана: выделения ещё не было, иначе нулевой cursor
+		// подсветил бы первую строку сам собой.
+		l.cursor = initialized.cursor
 	}
 	if len(l.sources) == 0 {
 		l.sources = initialized.sources
@@ -80,9 +118,49 @@ func (l *logsScreen) ensure() {
 	}
 }
 
+// syncLogSources пересобирает список источников под выбранный сервер: системный
+// журнал первым (он есть всегда и не зависит от systemd и docker), затем
+// systemd-юниты и docker-контейнеры, уже собранные экраном сервера. Активный
+// источник ищем в новом списке по значению — иначе каждая пересборка сбрасывала
+// бы выбор на системный журнал.
+func (m *Model) syncLogSources() {
+	m.logs.ensure()
+	current := m.logs.sources[0]
+	if m.logs.source >= 0 && m.logs.source < len(m.logs.sources) {
+		current = m.logs.sources[m.logs.source]
+	}
+	sources := []collect.LogSource{{Kind: collect.LogSystem}}
+	// Юниты и контейнеры берём только от текущего хоста: после экрана сервера A
+	// и возврата к списку они остаются в памяти, и на логах сервера B в оси
+	// источников оказались бы чужие имена.
+	if m.dashboard.server == m.selectedName() {
+		for _, unit := range m.dashboard.units.items {
+			if unit.Name == "" {
+				continue
+			}
+			sources = append(sources, collect.LogSource{Kind: collect.LogJournal, Name: unit.Name})
+		}
+		for _, container := range m.dashboard.containers.items {
+			if container.Name == "" {
+				continue
+			}
+			sources = append(sources, collect.LogSource{Kind: collect.LogContainer, Name: container.Name})
+		}
+	}
+	m.logs.sources = sources
+	m.logs.source = max(0, slices.Index(sources, current))
+}
+
 func (m *Model) startLogsStream() tea.Cmd {
 	m.logs.ensure()
+	m.syncLogSources()
 	m.cancelLogsStream()
+	// Новый поток — новый хост или источник: строки прежнего под новым заголовком
+	// выглядят как логи выбранного сервера, хотя пришли с другого.
+	m.logs.buffer.Reset()
+	m.logs.cursor = -1
+	m.logs.contextLines = nil
+	m.logs.refresh()
 	m.request = max(m.request, m.logs.generation) + 1
 	m.logs.generation = m.request
 	m.logs.status = diagnosticsLoading
@@ -102,6 +180,26 @@ func (m *Model) startLogsStream() tea.Cmd {
 	}
 }
 
+// scheduleLogsStream гасит текущий поток сразу, а новый открывает только после
+// паузы тишины: удержанная стрелка в ящике логов иначе открывала бы по SSH-каналу
+// на каждое движение курсора. Видимая часть работы — синхронная: строки прежнего
+// хоста под уже переписанным заголовком читались бы как его собственные.
+func (m *Model) scheduleLogsStream() tea.Cmd {
+	m.logs.ensure()
+	m.cancelLogsStream()
+	m.logs.buffer.Reset()
+	m.logs.cursor = -1
+	m.logs.contextLines = nil
+	m.logs.status = diagnosticsLoading
+	m.logs.err = nil
+	m.logs.refresh()
+	// Поколение растёт сразу: строка уже закрытого потока, успевшая уйти в
+	// очередь сообщений, не должна попасть в буфер нового хоста.
+	m.request = max(m.request, m.logs.generation) + 1
+	m.logs.generation = m.request
+	return debounceTick(debounceLogs, m.logs.generation)
+}
+
 func (m *Model) cancelLogsStream() {
 	if m.logs.cancel != nil {
 		m.logs.cancel()
@@ -109,11 +207,11 @@ func (m *Model) cancelLogsStream() {
 	}
 	if m.logs.stream.Close != nil {
 		_ = m.logs.stream.Close()
-		m.logs.stream = sshx.Stream{}
+		m.logs.stream = collect.LogStream{}
 	}
 }
 
-func waitLogEvent(generation uint64, stream sshx.Stream) tea.Cmd {
+func waitLogEvent(generation uint64, stream collect.LogStream) tea.Cmd {
 	return func() tea.Msg {
 		lines, errs := stream.Lines, stream.Errors
 		for lines != nil || errs != nil {
@@ -159,6 +257,9 @@ func (m *Model) handleLogsKey(key tea.KeyMsg) (tea.Cmd, bool) {
 			return cmd, true
 		}
 	}
+	if value != "y" {
+		m.logs.notice = ""
+	}
 	switch value {
 	case " ":
 		m.logs.paused = !m.logs.paused
@@ -170,30 +271,134 @@ func (m *Model) handleLogsKey(key tea.KeyMsg) (tea.Cmd, bool) {
 		m.logs.filterInput.Focus()
 		return textinput.Blink, true
 	case "w":
+		// По макету «w» — переключатель «только warn+», а не перебор уровней:
+		// warn как нижняя граница включает и error (visibleLines сравнивает >=).
+		if m.logs.level == logLevelWarn {
+			m.logs.level = logLevelAll
+		} else {
+			m.logs.level = logLevelWarn
+		}
+		m.logs.refresh()
+		return nil, true
+	case "W":
+		// Перебор всех четырёх уровней остался на shift+W: в футере макета его
+		// нет, поэтому клавиша живёт только в справке.
 		m.logs.level = (m.logs.level + 1) % logLevel(len(logLevelNames))
 		m.logs.refresh()
 		return nil, true
-	case "s", "x", "right":
+	case "s", "right":
 		return m.cycleLogSource(1), true
 	case "left":
 		return m.cycleLogSource(-1), true
 	case "r":
 		return m.startLogsStream(), true
-	case "up", "down", "pgup", "pgdown", "home", "end":
-		var cmd tea.Cmd
-		m.logs.viewport, cmd = m.logs.viewport.Update(key)
-		return cmd, true
+	case "n":
+		m.logs.jumpMatch(1)
+		return nil, true
+	case "N":
+		m.logs.jumpMatch(-1)
+		return nil, true
+	case "t":
+		m.logs.hideTime = !m.logs.hideTime
+		m.logs.refresh()
+		return nil, true
+	case "c":
+		m.logs.toggleContext()
+		return nil, true
+	case "y":
+		line, ok := m.logs.selectedLine()
+		if !ok {
+			m.logs.notice = "нет выделенной строки"
+			return nil, true
+		}
+		text, truncated := clipboardText(line)
+		m.logs.notice = "строка скопирована"
+		if truncated {
+			m.logs.notice = fmt.Sprintf("строка скопирована, обрезана до %d Б", len(text))
+		}
+		return copyToClipboard(text), true
+	case "esc":
+		if m.logs.contextLines != nil {
+			m.logs.toggleContext()
+			return nil, true
+		}
+		return nil, false
+	case "up", "k":
+		m.logs.moveCursor(-1)
+		return nil, true
+	case "down", "j":
+		m.logs.moveCursor(1)
+		return nil, true
+	case "pgup", "pgdown":
+		// Страницу листает выделение, а не одно окно просмотра: при активном
+		// выделении refresh() возвращает окно к курсору, и на живом потоке
+		// пролистанная вверх страница отматывалась бы обратно первой же
+		// пришедшей строкой.
+		step := max(1, m.logs.viewport.Height)
+		if value == "pgup" {
+			step = -step
+		}
+		m.logs.pageCursor(step)
+		return nil, true
+	case "home":
+		m.logs.gotoTop()
+		return nil, true
+	case "end":
+		m.logs.gotoBottom()
+		return nil, true
 	}
 	return nil, false
 }
 
 func (m *Model) cycleLogSource(delta int) tea.Cmd {
+	// Юниты и контейнеры могли догрузиться уже после открытия экрана: без
+	// пересборки здесь список так и остался бы из одного системного журнала.
+	m.syncLogSources()
 	count := len(m.logs.sources)
 	if count == 0 {
 		return nil
 	}
 	m.logs.source = ((m.logs.source+delta)%count + count) % count
 	return m.startLogsStream()
+}
+
+// clipboardLimit — предел полезной нагрузки OSC 52. Строка лога доходит до 1 МиБ
+// (предел сканера потока в sshx), а это ~1.4 МБ escape-последовательности: часть
+// терминалов на такой вставке зависает или обрывает вывод. Нескольких килобайт
+// хватает на любую осмысленную строку, которую переносят в тикет.
+const clipboardLimit = 4096
+
+// clipboardText обрезает копируемый текст до предела и говорит, обрезал ли:
+// молчаливая обрезка выглядела бы как порча буфера обмена.
+func clipboardText(text string) (string, bool) {
+	if len(text) <= clipboardLimit {
+		return text, false
+	}
+	// Режем по границе руны: половина UTF-8 символа в буфере обмена — мусор.
+	cut := clipboardLimit
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut], true
+}
+
+// osc52Copy — последовательность OSC 52: копирование делает сам терминал, поэтому
+// оно работает и через ssh, и не требует зависимостей. Терминалы без поддержки
+// просто игнорируют последовательность — ничего не ломается.
+func osc52Copy(text string) string {
+	// Предел применяем здесь, а не только на вызывающей стороне: последовательность
+	// уходит прямо в терминал, и защита должна стоять там же, где она собирается.
+	payload, _ := clipboardText(text)
+	return "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(payload)) + "\x07"
+}
+
+func copyToClipboard(text string) tea.Cmd {
+	return func() tea.Msg {
+		// Пишем прямо в stdout: у bubbletea нет команды «отправить произвольную
+		// escape-последовательность», а кадры рендерер печатает туда же.
+		_, _ = os.Stdout.WriteString(osc52Copy(text))
+		return nil
+	}
 }
 
 type logLevel int
@@ -221,6 +426,31 @@ func logLineLevel(line string) logLevel {
 }
 
 func (l logsScreen) visibleLines() []string {
+	if l.currentVisibleKey() == l.visibleKey {
+		return l.visible
+	}
+	return l.filterLines()
+}
+
+// syncVisible обновляет кэш видимых строк. Зовётся из refresh(), то есть один
+// раз на входящую строку потока или нажатие клавиши, а не по разу на каждый
+// вызов visibleLines внутри кадра.
+func (l *logsScreen) syncVisible() {
+	l.visibleKey = l.currentVisibleKey()
+	l.visible = l.filterLines()
+}
+
+func (l logsScreen) currentVisibleKey() logsVisibleKey {
+	if l.buffer == nil {
+		return logsVisibleKey{}
+	}
+	return logsVisibleKey{version: l.buffer.Version(), level: l.level}
+}
+
+func (l logsScreen) filterLines() []string {
+	if l.buffer == nil {
+		return nil
+	}
 	lines := l.buffer.Visible()
 	if l.level == logLevelAll {
 		return lines
@@ -232,6 +462,155 @@ func (l logsScreen) visibleLines() []string {
 		}
 	}
 	return out
+}
+
+// bodyLines — то, что показано в теле экрана: снимок контекста, если он включён,
+// иначе отфильтрованные строки.
+func (l logsScreen) bodyLines() []string {
+	if l.contextLines != nil {
+		return l.contextLines
+	}
+	return l.visibleLines()
+}
+
+// allLines — строки буфера без фильтра. Фильтр живёт внутри LogBuffer, поэтому
+// снимаем его на время выборки и сразу возвращаем: экран однопоточный.
+func (l *logsScreen) allLines() []string {
+	filter := l.filterInput.Value()
+	l.buffer.SetFilter("")
+	lines := l.buffer.Visible()
+	l.buffer.SetFilter(filter)
+	return lines
+}
+
+func (l logsScreen) selectedLine() (string, bool) {
+	lines := l.bodyLines()
+	if l.cursor < 0 || l.cursor >= len(lines) {
+		return "", false
+	}
+	return lines[l.cursor], true
+}
+
+func (l *logsScreen) moveCursor(delta int) {
+	lines := l.bodyLines()
+	if len(lines) == 0 {
+		l.cursor = -1
+		return
+	}
+	if l.cursor < 0 {
+		// Первое нажатие выделяет хвост: пользователь смотрит на последние строки.
+		l.cursor = len(lines) - 1
+	} else {
+		l.cursor = max(0, min(len(lines)-1, l.cursor+delta))
+	}
+	l.refresh()
+}
+
+// pageCursor двигает выделение на страницу. От moveCursor отличается первым
+// нажатием: с хвоста страница должна сразу уйти вверх, а не только выделить
+// последнюю строку.
+func (l *logsScreen) pageCursor(delta int) {
+	lines := l.bodyLines()
+	if len(lines) == 0 {
+		l.cursor = -1
+		return
+	}
+	if l.cursor < 0 {
+		l.cursor = len(lines) - 1
+	}
+	l.cursor = max(0, min(len(lines)-1, l.cursor+delta))
+	l.refresh()
+}
+
+// gotoTop выделяет первую строку, а не просто двигает окно: без выделения экран
+// следует за хвостом, и первая же пришедшая строка вернула бы окно вниз.
+func (l *logsScreen) gotoTop() {
+	if len(l.bodyLines()) == 0 {
+		l.cursor = -1
+		return
+	}
+	l.cursor = 0
+	l.refresh()
+}
+
+// gotoBottom снимает выделение: экран снова следует за хвостом потока.
+func (l *logsScreen) gotoBottom() {
+	l.cursor = -1
+	l.refresh()
+	l.viewport.GotoBottom()
+}
+
+// jumpMatch двигает выделение к следующему (delta=+1) или предыдущему (-1)
+// совпадению фильтра. Фильтр в обычном режиме уже отсеял строки, поэтому там
+// n/N идут по соседям; смысл появляется в режиме контекста, где фильтра нет.
+func (l *logsScreen) jumpMatch(delta int) {
+	lines := l.bodyLines()
+	needle := strings.ToLower(l.filterInput.Value())
+	start := l.cursor
+	if start < 0 {
+		if delta > 0 {
+			start = -1
+		} else {
+			start = len(lines)
+		}
+	}
+	for index := start + delta; index >= 0 && index < len(lines); index += delta {
+		if needle == "" || strings.Contains(strings.ToLower(lines[index]), needle) {
+			l.cursor = index
+			l.refresh()
+			return
+		}
+	}
+	l.notice = "совпадений больше нет"
+}
+
+// toggleContext собирает снимок окрестности выделенной строки без учёта фильтра:
+// смысл режима — увидеть как раз то, что фильтр прячет. Снимок статичный, хвост
+// в него не дописывается, поэтому выход по «c»/«esc» возвращает живой поток.
+func (l *logsScreen) toggleContext() {
+	if l.contextLines != nil {
+		l.contextLines = nil
+		l.cursor = -1
+		l.refresh()
+		return
+	}
+	if _, ok := l.selectedLine(); !ok {
+		l.notice = "нет выделенной строки"
+		return
+	}
+	all := l.allLines()
+	anchor := l.anchorIndex(all)
+	if anchor < 0 {
+		l.notice = "строка уже вытеснена из буфера"
+		return
+	}
+	start := max(0, anchor-logsContextRadius)
+	end := min(len(all), anchor+logsContextRadius+1)
+	l.contextLines = append([]string(nil), all[start:end]...)
+	l.cursor = anchor - start
+	l.refresh()
+}
+
+// anchorIndex переводит позицию курсора в отфильтрованном теле в индекс той же
+// строки в нефильтрованном буфере: идём по буферу тем же предикатом, что и
+// visibleLines, и считаем совпадения. Поиск по тексту строки не годится —
+// одинаковые строки в логе встречаются постоянно.
+func (l logsScreen) anchorIndex(all []string) int {
+	needle := strings.ToLower(l.filterInput.Value())
+	seen := 0
+	for index, line := range all {
+		if needle != "" && !strings.Contains(strings.ToLower(line), needle) {
+			continue
+		}
+		if l.level != logLevelAll && logLineLevel(line) < l.level {
+			continue
+		}
+		if seen == l.cursor {
+			return index
+		}
+		seen++
+	}
+	return -1
 }
 
 func highlightMatches(line, filter string) string {
@@ -259,9 +638,13 @@ func highlightMatches(line, filter string) string {
 	}
 }
 
+// logsChromeLines — сколько строк экрана занимает всё, кроме списка: заголовок,
+// три оси, подсказка выделения, полоса плотности и две строки футера.
+const logsChromeLines = 8
+
 func (l *logsScreen) resize(width, height int) {
 	l.ensure()
-	bodyHeight := max(1, height-6)
+	bodyHeight := max(1, height-logsChromeLines)
 	if !l.ready {
 		l.viewport = viewport.New(max(1, width), bodyHeight)
 		l.ready = true
@@ -274,28 +657,214 @@ func (l *logsScreen) resize(width, height int) {
 }
 
 func (l *logsScreen) refresh() {
+	l.syncVisible()
 	if !l.ready {
 		return
 	}
-	lines := l.visibleLines()
+	lines := l.bodyLines()
+	if l.cursor >= len(lines) {
+		l.cursor = len(lines) - 1
+	}
+	filter := l.filterInput.Value()
 	rendered := make([]string, len(lines))
 	for i, line := range lines {
-		rendered[i] = highlightMatches(line, l.filterInput.Value())
+		text := l.displayLine(line)
+		if i == l.cursor {
+			// Подсветку совпадений на выделенной строке не накладываем: её
+			// внутренний «сброс цвета» оборвал бы фон на середине строки.
+			rendered[i] = logSelectionStyle.Render(padCell("▍"+text, max(1, l.viewport.Width)))
+			continue
+		}
+		rendered[i] = " " + highlightMatches(text, filter)
 	}
 	l.viewport.SetContent(strings.Join(rendered, "\n"))
-	if !l.paused {
+	switch {
+	case l.cursor >= 0:
+		l.scrollToCursor(len(lines))
+	case !l.paused:
 		l.viewport.GotoBottom()
 	}
 }
 
+func (l *logsScreen) scrollToCursor(total int) {
+	height := max(1, l.viewport.Height)
+	offset := l.viewport.YOffset
+	if l.cursor < offset {
+		offset = l.cursor
+	}
+	if l.cursor >= offset+height {
+		offset = l.cursor - height + 1
+	}
+	// Присваивание поля, а не SetYOffset: YOffset — публичное поле viewport'а,
+	// поэтому кламп по обоим краям делаем сами.
+	l.viewport.YOffset = max(0, min(offset, max(0, total-height)))
+}
+
+// displayLine убирает колонку времени, когда она выключена клавишей «t»: на
+// узком терминале сообщение важнее отметки, а формат префикса у journalctl и
+// docker разный, поэтому режем по найденной метке HH:MM:SS.
+func (l logsScreen) displayLine(line string) string {
+	if !l.hideTime {
+		return line
+	}
+	if end, _, ok := logTimeAt(line); ok {
+		return strings.TrimLeft(line[end:], " ")
+	}
+	return line
+}
+
+// logTimePrefixLimit — докуда ищем отметку времени. Дальше начала строки её не
+// бывает, а искать по всей строке нельзя: «12:34:56» встречается и в сообщении.
+const logTimePrefixLimit = 40
+
+// logTimeAt ищет в начале строки время суток HH:MM:SS. Префиксы разные
+// (journalctl «Aug 01 19:41:02 host …», docker — ISO-8601), но время суток в
+// обоих стоит в первых полях: этого хватает и полосе плотности, и клавише «t».
+// Возвращает индекс за меткой и время в секундах от полуночи.
+func logTimeAt(line string) (int, int, bool) {
+	limit := min(len(line), logTimePrefixLimit)
+	for i := 0; i+8 <= limit; i++ {
+		if line[i+2] != ':' || line[i+5] != ':' {
+			continue
+		}
+		if i > 0 && line[i-1] >= '0' && line[i-1] <= '9' {
+			continue // хвост более длинного числа, а не часы
+		}
+		hours, okH := twoDigits(line[i:])
+		minutes, okM := twoDigits(line[i+3:])
+		seconds, okS := twoDigits(line[i+6:])
+		if !okH || !okM || !okS || hours > 23 || minutes > 59 || seconds > 59 {
+			continue
+		}
+		return i + 8, hours*3600 + minutes*60 + seconds, true
+	}
+	return 0, 0, false
+}
+
+func twoDigits(value string) (int, bool) {
+	if len(value) < 2 || value[0] < '0' || value[0] > '9' || value[1] < '0' || value[1] > '9' {
+		return 0, false
+	}
+	return int(value[0]-'0')*10 + int(value[1]-'0'), true
+}
+
+const secondsPerDay = 24 * 3600
+
+// logDensity — распределение строк по времени для полосы плотности.
+type logDensity struct {
+	counts     []*float64
+	spike      string
+	spikeLevel logLevel
+	span       string
+}
+
+// newLogDensity раскладывает строки по buckets вёдрам между первой и последней
+// отметкой времени. Строки без времени просто не попадают в полосу: пустая
+// полоса честнее выдуманного распределения.
+func newLogDensity(lines []string, buckets int) logDensity {
+	if buckets < 1 {
+		return logDensity{}
+	}
+	type entry struct {
+		at    int
+		level logLevel
+	}
+	entries := make([]entry, 0, len(lines))
+	first, last := 0, 0
+	// Строки приходят по порядку, а время суток за полночь «идёт назад»: без
+	// добавления суток лог через полночь давал span ≈ 86 000 секунд и подпись
+	// «-23ч — сейчас» вместо нескольких минут.
+	day, previous := 0, -1
+	for _, line := range lines {
+		_, at, ok := logTimeAt(line)
+		if !ok {
+			continue
+		}
+		if previous >= 0 && at+day < previous {
+			day += secondsPerDay
+		}
+		at += day
+		previous = at
+		if len(entries) == 0 || at < first {
+			first = at
+		}
+		if len(entries) == 0 || at > last {
+			last = at
+		}
+		entries = append(entries, entry{at: at, level: logLineLevel(line)})
+	}
+	if len(entries) == 0 {
+		return logDensity{}
+	}
+	span := last - first
+	counts := make([]float64, buckets)
+	alerts := make([]int, buckets)
+	worst := make([]logLevel, buckets)
+	for _, item := range entries {
+		bucket := 0
+		if span > 0 {
+			bucket = (item.at - first) * (buckets - 1) / span
+		}
+		counts[bucket]++
+		if item.level >= logLevelWarn {
+			alerts[bucket]++
+			if item.level > worst[bucket] {
+				worst[bucket] = item.level
+			}
+		}
+	}
+	density := logDensity{counts: make([]*float64, buckets), span: "-" + shortSpan(span) + " — сейчас"}
+	for i := range counts {
+		density.counts[i] = &counts[i]
+	}
+	peak := -1
+	for i, count := range alerts {
+		if count > 0 && (peak < 0 || count > alerts[peak]) {
+			peak = i
+		}
+	}
+	if peak >= 0 {
+		at := first
+		if buckets > 1 {
+			at = first + peak*span/(buckets-1)
+		}
+		// Обратно ко времени суток: у лога через полночь к отметке прибавлены сутки.
+		at %= secondsPerDay
+		density.spikeLevel = worst[peak]
+		density.spike = fmt.Sprintf("⚠ %02d:%02d всплеск %s", at/3600, at/60%60, logLevelNames[worst[peak]])
+	}
+	return density
+}
+
+func shortSpan(seconds int) string {
+	switch {
+	case seconds >= 3600:
+		return fmt.Sprintf("%dч", seconds/3600)
+	case seconds >= 60:
+		return fmt.Sprintf("%dм", seconds/60)
+	default:
+		return fmt.Sprintf("%dс", seconds)
+	}
+}
+
 func (m Model) logsState() string {
-	if m.logs.err != nil {
-		return "ошибка: " + m.logs.err.Error()
-	}
-	if m.logs.paused {
+	return logsStateText(m.logs.err, m.logs.paused)
+}
+
+// logsStateText — общая формулировка состояния хвоста для полноэкранных логов,
+// ящика логов флота и плитки логов на экране сервера: один и тот же поток не
+// должен называться на трёх экранах по-разному. Формулировки короткие (макет
+// 3d: «postgres · warn+ · хвост вкл»), потому что в ящик логов строка состояния
+// помещается вместе с именем источника, уровнем и счётчиком.
+func logsStateText(err error, paused bool) string {
+	switch {
+	case err != nil:
+		return "ошибка: " + errText(err)
+	case paused:
 		return "хвост на паузе"
+	default:
+		return "хвост вкл"
 	}
-	return "хвост включён"
 }
 
 func logSourceLabel(source collect.LogSource) string {
@@ -306,19 +875,62 @@ func logSourceLabel(source collect.LogSource) string {
 	return label
 }
 
+// logsAxisLabel — подпись источника в оси полноэкранных логов: системный журнал
+// «systemd», юнит — коротким именем, контейнер — «docker/имя» (как в макете).
+// Отдельно от logSourceLabel: ту подпись показывает ящик логов на списке хостов.
+func logsAxisLabel(source collect.LogSource) string {
+	switch source.Kind {
+	case collect.LogContainer:
+		return "docker/" + source.Name
+	case collect.LogJournal:
+		return strings.TrimSuffix(source.Name, ".service")
+	default:
+		return "systemd"
+	}
+}
+
 func (m Model) logsSourceAxis(width int) string {
-	labels := make([]string, 0, len(m.logs.sources))
-	for i, source := range m.logs.sources {
-		label := logSourceLabel(source)
-		if i == m.logs.source {
-			labels = append(labels, titleStyle.Render("["+label+"]"))
+	sources := m.logs.sources
+	prefix := "источник  "
+	right := dimStyle.Render(fmt.Sprintf("%d/%d · ← →", min(m.logs.source+1, max(1, len(sources))), max(1, len(sources))))
+	if len(sources) == 0 {
+		return spread(dimStyle.Render(prefix), right, width)
+	}
+	active := max(0, min(len(sources)-1, m.logs.source))
+	labels := make([]string, len(sources))
+	for i, source := range sources {
+		labels[i] = logsAxisLabel(source)
+	}
+	// Источников бывает десятки (юниты плюс контейнеры), в строку они не влезут.
+	// Показываем окно вокруг активного: обрезка с конца прятала бы как раз его.
+	budget := max(1, width-lipgloss.Width(prefix)-lipgloss.Width(right)-2)
+	low, high := active, active
+	used := lipgloss.Width(labels[active]) + 2 // скобки вокруг активного
+	for {
+		grew := false
+		if high+1 < len(labels) && used+1+lipgloss.Width(labels[high+1]) <= budget {
+			high++
+			used += 1 + lipgloss.Width(labels[high])
+			grew = true
+		}
+		if low > 0 && used+1+lipgloss.Width(labels[low-1]) <= budget {
+			low--
+			used += 1 + lipgloss.Width(labels[low])
+			grew = true
+		}
+		if !grew {
+			break
+		}
+	}
+	parts := make([]string, 0, high-low+1)
+	for i := low; i <= high; i++ {
+		if i == active {
+			parts = append(parts, titleStyle.Render("["+labels[i]+"]"))
 			continue
 		}
-		labels = append(labels, dimStyle.Render(label))
+		parts = append(parts, dimStyle.Render(labels[i]))
 	}
-	left := dimStyle.Render("источник  ") + strings.Join(labels, " ")
-	right := dimStyle.Render(fmt.Sprintf("%d/%d · ← →", m.logs.source+1, max(1, len(m.logs.sources))))
-	return spread(left, right, width)
+	return spread(dimStyle.Render(prefix)+strings.Join(parts, " "), right, width)
 }
 
 func (m Model) logsLevelAxis(width int) string {
@@ -331,7 +943,7 @@ func (m Model) logsLevelAxis(width int) string {
 		labels = append(labels, dimStyle.Render(name))
 	}
 	left := dimStyle.Render("уровень   ") + strings.Join(labels, " ")
-	return spread(left, dimStyle.Render("w уровень"), width)
+	return spread(left, dimStyle.Render("w только warn+"), width)
 }
 
 func (m Model) logsFilterAxis(width int) string {
@@ -348,20 +960,100 @@ func (m Model) logsFilterAxis(width int) string {
 }
 
 func (m Model) logsCountHint() string {
-	return fmt.Sprintf("%d из %d строк", len(m.logs.visibleLines()), m.logs.buffer.Total())
+	return fmt.Sprintf("%s из %s строк", groupDigits(len(m.logs.visibleLines())), groupDigits(m.logs.buffer.Total()))
+}
+
+// groupDigits разбивает число на группы по три: в макете счётчик «214 из 8 412».
+func groupDigits(value int) string {
+	digits := fmt.Sprint(value)
+	if len(digits) <= 3 {
+		return digits
+	}
+	var b strings.Builder
+	for i, digit := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			b.WriteRune(' ')
+		}
+		b.WriteRune(digit)
+	}
+	return b.String()
+}
+
+func (m Model) logsDensityLine(width int) string {
+	cells := max(8, min(30, width/3))
+	density := newLogDensity(m.logs.bodyLines(), cells)
+	left := dimStyle.Render("плотность ") + historySparkline(density.counts, cells)
+	if density.spike != "" {
+		style := warnStyle
+		if density.spikeLevel == logLevelError {
+			style = criticalStyle
+		}
+		left += "   " + style.Render(density.spike)
+	}
+	return spread(left, dimStyle.Render(density.span), width)
+}
+
+// logsSelectionHint — подсказка под списком строк. В режиме контекста она
+// говорит, чем этот режим отличается и как из него выйти.
+func (m Model) logsSelectionHint() string {
+	if m.logs.contextLines != nil {
+		return fmt.Sprintf("контекст ±%d строк без фильтра · c или esc назад", logsContextRadius)
+	}
+	return "↑ выделенная строка · y скопировать · c контекст ±5"
+}
+
+// logsFooter собирает футер макета. На узком терминале клавиши не заменяются
+// другими: список тот же, просто хвост не влезших отбрасывается — кроме «esc»,
+// без которого с экрана не выйти.
+func logsFooter(width int) []string {
+	const separator = " · "
+	const closeHint = "esc закрыть"
+	items := []string{
+		"/ фильтр", "n/N след/пред", "w только warn+", "space пауза хвоста",
+		"t время", "c контекст ±5", "y копировать",
+	}
+	rows := []string{""}
+	for _, item := range items {
+		row := rows[len(rows)-1]
+		switch {
+		case row == "":
+			rows[len(rows)-1] = item
+		case lipgloss.Width(row+separator+item) <= width:
+			rows[len(rows)-1] = row + separator + item
+		case len(rows) < 2:
+			rows = append(rows, item)
+		}
+	}
+	last := len(rows) - 1
+	for lipgloss.Width(rows[last]+separator+closeHint) > width && strings.Contains(rows[last], separator) {
+		rows[last] = rows[last][:strings.LastIndex(rows[last], separator)]
+	}
+	if rows[last] == "" {
+		rows[last] = closeHint
+	} else {
+		rows[last] += separator + closeHint
+	}
+	for i, row := range rows {
+		rows[i] = dimStyle.Render(fitLine(row, width))
+	}
+	return rows
 }
 
 func (m Model) renderLogs() string {
 	m.logs.ensure()
 	width := m.layout.width
+	state := m.logsState()
+	if m.logs.notice != "" {
+		state = m.logs.notice
+	}
 	lines := []string{
-		spread(titleStyle.Render("ЛОГИ · "+m.selectedName()), dimStyle.Render(m.logsState()), width),
+		spread(titleStyle.Render("ЛОГИ · "+m.selectedName()), dimStyle.Render(state), width),
 		m.logsSourceAxis(width),
 		m.logsLevelAxis(width),
 		m.logsFilterAxis(width),
 		m.logs.viewport.View(),
-		dimStyle.Render("/ фильтр · w уровень · space пауза хвоста · ← → источник"),
-		dimStyle.Render("r переподключить · esc назад"),
+		spread("", dimStyle.Render(m.logsSelectionHint()), width),
+		m.logsDensityLine(width),
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(append(lines, logsFooter(width)...), "\n")
 }

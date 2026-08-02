@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/kibomibo/sshmon/internal/collect"
 )
 
@@ -33,171 +35,266 @@ func TestLoadColorStyleScalesWithNumCPU(t *testing.T) {
 	}
 }
 
-// TestLoadColorStyleBoundaryCases — Given exact boundary load values,
-// When loadColorStyle classifies them, Then boundary inclusive on low side.
-func TestLoadColorStyleBoundaryCases(t *testing.T) {
-	// Given NumCPU=2 (thresholds: green<1.5, yellow 1.5–3.0, red>3.0)
+// TestLoadStyleBoundaryCases — Дано: значения ровно на границах порогов;
+// Когда: выбирается стиль числа load; Тогда: границы принадлежат нижнему цвету.
+// Сравнивается цвет стиля, а не отрисованная строка: под go test у lipgloss
+// профиль Ascii и ANSI-кодов в выводе нет.
+func TestLoadStyleBoundaryCases(t *testing.T) {
+	// Дано: NumCPU=2 (пороги: зелёный <1.5, жёлтый 1.5–3.0, красный >3.0).
 	const numCPU = 2
 
-	cases := []struct {
+	for _, tc := range []struct {
 		name string
 		load float64
-		want string // "green"|"yellow"|"red"
+		want lipgloss.Style
 	}{
-		{"at green/yellow boundary (0.75×)", 1.5, "yellow"},
-		{"at yellow/red boundary (1.5×)", 3.0, "red"},
-		{"just under yellow/red (1.49×)", 2.98, "yellow"},
-		{"zero load", 0.0, "green"},
-	}
-	for _, tc := range cases {
+		{"нулевая загрузка", 0.0, goodStyle},
+		{"под нижней границей (0.74×)", 1.49, goodStyle},
+		{"ровно на 0.75×", 1.5, warnStyle},
+		{"ровно на 1.5×", 3.0, warnStyle},
+		{"чуть выше 1.5×", 3.01, criticalStyle},
+		{"без данных о ядрах", 4.0, criticalStyle},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// When
-			got := loadColorStyle(tc.load, numCPU)
-			// Then: output contains the load value and a color code
-			if !strings.Contains(got, "g") && tc.want == "green" {
-				// goodStyle renders text; just ensure no crash and value present
+			cpus := numCPU
+			if tc.name == "без данных о ядрах" {
+				cpus = 0 // NumCPU<1 трактуется как одно ядро
 			}
-			_ = got // style contains ANSI; assert no panic + non-empty
-			if got == "" {
-				t.Fatalf("expected non-empty styled load for %s", tc.name)
+			if got := loadStyle(tc.load, cpus); got.GetForeground() != tc.want.GetForeground() {
+				t.Fatalf("loadStyle(%v, %d) цвет = %v, ожидался %v", tc.load, cpus, got.GetForeground(), tc.want.GetForeground())
 			}
 		})
 	}
+
+	// И: отрисованное значение по-прежнему несёт саму величину.
+	if got := loadColorStyle(1.5, numCPU); !strings.Contains(got, "1.50") {
+		t.Fatalf("loadColorStyle потерял величину: %q", got)
+	}
 }
 
-// TestDiskBarsRenderPerMountProgressWithGBLabels — Given server with disks,
-// When diskBars renders them, Then each mount has a progress bar and GB labels (no "max").
-func TestDiskBarsRenderPerMountProgressWithGBLabels(t *testing.T) {
-	// Given: server with / mount 40% used
+// TestServerMetricGridTrendCellPerMetric — Дано: сервер с памятью, диском и
+// коротким рядом CPU; Когда: рисуется сетка метрик; Тогда: у каждой строки
+// своя колонка тренда из макета — спарклайн, заливка, заливка, пусто.
+func TestServerMetricGridTrendCellPerMetric(t *testing.T) {
+	// Дано: три точки CPU, память 50% и диск 78%.
 	server := collect.Metrics{
-		Disks: []collect.DiskUsage{
-			{Mount: "/", TotalKB: 100000000, UsedKB: 40000000, AvailKB: 60000000, UsedPct: 40},
-		},
+		NumCPU: 4, CPUPct: 20, MemTotalKB: 16 << 20, MemAvailKB: 8 << 20, MemPct: 50,
+		Disks: []collect.DiskUsage{{Fs: "/dev/sda2", Mount: "/", TotalKB: 49 << 20, UsedKB: 38 << 20, UsedPct: 78}},
 	}
+	low, high, mid := 10.0, 40.0, 20.0
+	series := []*float64{&low, &high, &mid}
 
-	// When
-	bars := diskBars(server, 40)
+	// Когда: сетка рисуется на широком терминале.
+	rows := serverMetricGrid(server, series, series, 120)
 
-	// Then: at least one bar; contains "/" and "ГБ" labels; no "max" substring
-	if len(bars) == 0 {
-		t.Fatal("expected at least one disk bar row")
+	// Тогда: у CPU и NET спарклайн, у MEM и DISK заливка.
+	for _, index := range []int{0, 2} {
+		if !strings.ContainsAny(rows[index], "▁▂▃▄▅▆▇") {
+			t.Fatalf("строка %d осталась без спарклайна тренда: %q", index, rows[index])
+		}
 	}
-	joined := strings.Join(bars, "\n")
-	if !strings.Contains(joined, "/") {
-		t.Errorf("expected mount '/' in bars: %q", joined)
+	for index, row := range map[int]string{1: rows[1], 3: rows[3]} {
+		if !strings.Contains(row, "█") || !strings.Contains(row, gaugeEmpty) {
+			t.Fatalf("строка %d не заливка текущего процента: %q", index, row)
+		}
 	}
-	if strings.Contains(joined, "max") {
-		t.Errorf("expected no 'max' in disk bars: %q", joined)
+	// Тогда: мёртвой сплошной черты нет ни в одной строке.
+	for index, row := range rows {
+		if strings.Contains(row, "─") {
+			t.Fatalf("строка %d рисует сплошную черту вместо тренда: %q", index, row)
+		}
 	}
 }
 
-// TestDiskTextDropsMaxField — Given server with disks and IO,
-// When diskText formats the summary, Then only R/W rates shown (no "max N%").
-func TestDiskTextDropsMaxField(t *testing.T) {
-	// Given
-	server := collect.Metrics{
-		Disks: []collect.DiskUsage{{Mount: "/", UsedPct: 92}},
-		IO:    []collect.DiskIO{{ReadBps: 0, WriteBps: 6000}},
-	}
+// TestServerMetricGridSurvivesShortCPUSeries — Дано: ряд CPU пуст или в одну
+// точку (первые тики после старта); Когда: рисуется сетка; Тогда: ничего не
+// ломается, а пустой ряд даёт пустую колонку, а не сплошную черту.
+func TestServerMetricGridSurvivesShortCPUSeries(t *testing.T) {
+	server := collect.Metrics{NumCPU: 2, CPUPct: 12, MemPct: 30}
+	single := 12.0
 
-	// When
-	got := diskText(server)
-
-	// Then: no "max" prefix; has R and W
-	if strings.Contains(got, "max") {
-		t.Errorf("expected no 'max' in diskText: %q", got)
+	empty := serverMetricGrid(server, nil, nil, 100)
+	for _, index := range []int{0, 2} {
+		if strings.ContainsAny(empty[index], "─█"+gaugeEmpty+"▁▂▃▄▅▆▇") {
+			t.Fatalf("пустой ряд должен давать пустую колонку в строке %d: %q", index, empty[index])
+		}
 	}
-	if !strings.Contains(got, "R") || !strings.Contains(got, "W") {
-		t.Errorf("expected R and W in diskText: %q", got)
+	one := serverMetricGrid(server, []*float64{&single}, []*float64{&single}, 100)
+	for _, index := range []int{0, 2} {
+		if !strings.Contains(one[index], "▁") {
+			t.Fatalf("ряд в одну точку не нарисован в строке %d: %q", index, one[index])
+		}
+	}
+	// И: пропуск (сервер был offline) не роняет отрисовку.
+	gap := serverMetricGrid(server, []*float64{nil, &single}, []*float64{nil, &single}, 100)
+	if len(gap) != 4 {
+		t.Fatalf("сетка из %d строк, ожидалось 4", len(gap))
 	}
 }
 
-// TestDashboardMetricsContentReformFormat — Given a server with full metrics,
-// When dashboardMetricsContent renders, Then:
-// - longer CPU bar present
-// - load values present WITHOUT "LOAD" label
-// - blank line separator between CPU/MEM and MEM/ДИСКИ blocks
-// - MEM bar present
-// - RAM and SWAP lines under MEM
-// - ДИСКИ header + per-mount bars + IO line.
-func TestDashboardMetricsContentReformFormat(t *testing.T) {
-	// Given
-	server := collect.Metrics{
-		NumCPU:     4,
-		CPUPct:     55,
-		Load1:      1.2,
-		Load5:      1.0,
-		Load15:     0.8,
-		MemPct:     60,
-		MemTotalKB: 16000000,
-		MemAvailKB: 6400000,
-		Disks: []collect.DiskUsage{
-			{Mount: "/", TotalKB: 100000000, UsedKB: 40000000, AvailKB: 60000000, UsedPct: 40},
-		},
-		IO: []collect.DiskIO{{ReadBps: 1000, WriteBps: 2000}},
+// TestRecordTrendsKeepsBoundedSeriesPerServer — Дано: поток снапшотов;
+// Когда: Model копит тренды CPU и NET; Тогда: ряды ограничены по длине, идут
+// по одним правилам, а ряды исчезнувших серверов не остаются в памяти.
+func TestRecordTrendsKeepsBoundedSeriesPerServer(t *testing.T) {
+	// Дано: два сервера, один из которых offline.
+	m := Model{}
+	for range cpuTrendPoints + 10 {
+		m.snapshot = collect.Snapshot{Servers: []collect.Metrics{
+			{Name: "web", Online: true, CPUPct: 25, Net: []collect.NetRate{{Iface: "eth0", RxBps: 100, TxBps: 20}, {Iface: "eth1", RxBps: 5, TxBps: 1}}},
+			{Name: "db", Online: false, CPUPct: 99},
+		}}
+		m.recordTrends()
 	}
 
-	// When
-	rows := dashboardMetricsContent(server, 50, false)
-	joined := strings.Join(rows, "\n")
+	// Тогда: ряд NET живёт по тем же правилам и хранит сумму по интерфейсам.
+	if got := len(m.netTrends["web"]); got != cpuTrendPoints {
+		t.Fatalf("ряд NET web длиной %d, ожидалось %d", got, cpuTrendPoints)
+	}
+	if point := m.netTrends["web"][cpuTrendPoints-1]; point == nil || *point != 126 {
+		t.Fatalf("последняя точка NET web = %v, ожидалось 126", point)
+	}
+	if point := m.netTrends["db"][cpuTrendPoints-1]; point != nil {
+		t.Fatalf("offline-сервер должен давать пропуск и в ряду NET, получено %v", *point)
+	}
 
-	// Then: no literal "LOAD" label
-	if strings.Contains(joined, "LOAD") {
-		t.Errorf("expected no 'LOAD' label in reformed metrics: %q", joined)
+	// Тогда: длина ряда ограничена кольцом, а offline даёт пропуск.
+	if got := len(m.cpuTrends["web"]); got != cpuTrendPoints {
+		t.Fatalf("ряд web длиной %d, ожидалось %d", got, cpuTrendPoints)
 	}
-	// Then: load values present (1.20)
-	if !strings.Contains(joined, "1.20") {
-		t.Errorf("expected load value 1.20 in metrics: %q", joined)
+	if point := m.cpuTrends["web"][cpuTrendPoints-1]; point == nil || *point != 25 {
+		t.Fatalf("последняя точка web = %v, ожидалось 25", point)
 	}
-	// Then: CPU bar (█ or ░)
-	if !strings.Contains(joined, "█") && !strings.Contains(joined, "░") {
-		t.Errorf("expected CPU bar glyph in metrics: %q", joined)
+	if point := m.cpuTrends["db"][cpuTrendPoints-1]; point != nil {
+		t.Fatalf("offline-сервер должен давать пропуск, получено %v", *point)
 	}
-	// Then: MEM section
-	if !strings.Contains(joined, "ПАМЯТЬ") {
-		t.Errorf("expected 'ПАМЯТЬ' label in metrics: %q", joined)
+
+	// Когда: сервер пропал из снапшота.
+	m.snapshot = collect.Snapshot{Servers: []collect.Metrics{{Name: "web", Online: true, CPUPct: 30}}}
+	m.recordTrends()
+
+	// Тогда: его ряды не переносятся в новые карты.
+	if _, ok := m.cpuTrends["db"]; ok {
+		t.Fatal("ряд CPU исчезнувшего сервера остался в памяти")
 	}
-	// Then: ДИСКИ header
-	if !strings.Contains(joined, "ДИСКИ") {
-		t.Errorf("expected 'ДИСКИ' header in metrics: %q", joined)
-	}
-	// Then: blank line separator present
-	if !containsBlank(rows) {
-		t.Errorf("expected at least one blank line separator in metrics: %q", joined)
+	if _, ok := m.netTrends["db"]; ok {
+		t.Fatal("ряд NET исчезнувшего сервера остался в памяти")
 	}
 }
 
-// TestProblemsTopStripRenderedAbovePanelsInWideMode — Given a wide layout
-// and a server with problems, When renderDashboardWorkspace renders,
-// Then ПРОБЛЕМЫ strip appears BEFORE the CPU metric row.
-func TestProblemsTopStripRenderedAbovePanelsInWideMode(t *testing.T) {
-	// Given: model with selected server, problems, wide layout
+// TestNetTrendFillsTheNetRowOnScreen — Дано: экран сервера, на котором Model
+// уже накопила снапшоты; Когда: рисуется сетка метрик; Тогда: колонка тренда
+// строки NET занята спарклайном, а не пустотой.
+func TestNetTrendFillsTheNetRowOnScreen(t *testing.T) {
+	m := serverScreenModel(120, 30)
+	for i := range 5 {
+		m.snapshot.Servers[0].Net = []collect.NetRate{{Iface: "eth0", RxBps: float64(1000 * (i + 1)), TxBps: 500}}
+		m.recordTrends()
+	}
+
+	rows := serverMetricGrid(m.snapshot.Servers[0], m.cpuTrends[m.snapshot.Servers[0].Name], m.netTrends[m.snapshot.Servers[0].Name], 120)
+	if !strings.ContainsAny(rows[2], "▁▂▃▄▅▆▇█") {
+		t.Fatalf("колонка тренда NET осталась пустой: %q", rows[2])
+	}
+	// И: детали строки на месте — спарклайн встал в свою колонку, а не поверх них.
+	if !strings.Contains(rows[2], "rx") || !strings.Contains(rows[2], "tx") {
+		t.Fatalf("строка NET потеряла детали: %q", rows[2])
+	}
+}
+
+// TestFullestDiskDrivesTheDiskRow — Дано: несколько разделов;
+// Когда: строка DISK одна; Тогда: в ней самый заполненный раздел.
+func TestFullestDiskDrivesTheDiskRow(t *testing.T) {
+	// Дано: загрузочный раздел свободен, корневой почти полон.
+	server := collect.Metrics{Disks: []collect.DiskUsage{
+		{Fs: "/dev/sda1", Mount: "/boot", TotalKB: 1 << 20, UsedKB: 1 << 18, UsedPct: 17},
+		{Fs: "/dev/sda2", Mount: "/", TotalKB: 49 << 20, UsedKB: 38 << 20, UsedPct: 78},
+	}}
+
+	// Когда: выбирается раздел для строки DISK.
+	disk, ok := fullestDisk(server)
+
+	// Тогда: это корневой раздел, а детали содержат объём, точку и устройство.
+	if !ok || disk.Mount != "/" {
+		t.Fatalf("fullestDisk = %#v (ok=%v), want / mount", disk, ok)
+	}
+	details := diskUsageDetails(disk)
+	for _, want := range []string{"38.0G", "49.0G", "/ (sda2)"} {
+		if !strings.Contains(details, want) {
+			t.Fatalf("детали диска без %q: %q", want, details)
+		}
+	}
+	if _, ok := fullestDisk(collect.Metrics{}); ok {
+		t.Fatal("сервер без дисков не должен давать раздел")
+	}
+}
+
+// TestMemoryDetailsShowSwapOnlyWhenConfigured — Дано: сервер со swap и без;
+// Когда: строятся детали строки MEM; Тогда: swap появляется лишь при наличии.
+func TestMemoryDetailsShowSwapOnlyWhenConfigured(t *testing.T) {
+	// Дано: 16G памяти, из них 6.4G свободно, swap 2G наполовину занят.
+	withSwap := collect.Metrics{MemTotalKB: 16 << 20, MemAvailKB: 6 << 20, SwapTotalKB: 2 << 20, SwapFreeKB: 1 << 20}
+
+	// Когда/тогда: обе пары значений на месте.
+	got := memoryDetails(withSwap)
+	for _, want := range []string{"10.0G / 16.0G", "swap", "1.0G / 2.0G"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("детали памяти без %q: %q", want, got)
+		}
+	}
+
+	// Когда/тогда: без swap строка не врёт про нулевой раздел.
+	if got := memoryDetails(collect.Metrics{MemTotalKB: 16 << 20, MemAvailKB: 6 << 20}); strings.Contains(got, "swap") {
+		t.Fatalf("swap показан при его отсутствии: %q", got)
+	}
+}
+
+// TestNetworkDetailsSumInterfaces — Дано: два интерфейса;
+// Когда: строятся детали строки NET; Тогда: показана сумма rx и tx.
+func TestNetworkDetailsSumInterfaces(t *testing.T) {
+	// Дано: два интерфейса по 1 КБ/с на приём.
+	server := collect.Metrics{Net: []collect.NetRate{
+		{Iface: "ens32", RxBps: 1024, TxBps: 512},
+		{Iface: "ens33", RxBps: 1024, TxBps: 512},
+	}}
+
+	// Когда: строится строка деталей.
+	got := networkDetails(server)
+
+	// Тогда: интерфейсы просуммированы, а таблицы интерфейсов больше нет.
+	if !strings.Contains(got, "rx 2.0K/s") || !strings.Contains(got, "tx 1.0K/s") {
+		t.Fatalf("детали сети = %q", got)
+	}
+	if strings.Contains(got, "ens32") {
+		t.Fatalf("строка NET не должна раскрывать интерфейсы: %q", got)
+	}
+}
+
+// TestProblemsTopStripRenderedAbovePanels — Given a server with problems,
+// When the server screen renders, Then the ПРОБЛЕМЫ strip precedes the grid.
+func TestProblemsTopStripRenderedAbovePanels(t *testing.T) {
+	// Given: model with selected server, problems, two-column layout.
 	m := dashboardWorkspaceFixture()
 	m.layout = newLayout(120, 30)
-	// Inject a problem
 	m.snapshot.Issues = []collect.Issue{{Server: m.snapshot.Servers[0].Name, Severity: "warn", Msg: "test problem"}}
 
 	// When
 	view := m.View()
 
-	// Then: ПРОБЛЕМЫ appears before CPU panel
+	// Then: ПРОБЛЕМЫ appears before the CPU row.
 	probIdx := strings.Index(view, "ПРОБЛЕМЫ")
 	cpuIdx := strings.Index(view, "CPU")
-	if probIdx < 0 {
-		t.Fatal("expected ПРОБЛЕМЫ top strip in view")
-	}
-	if cpuIdx < 0 {
-		t.Fatal("expected CPU metric row in view")
+	if probIdx < 0 || cpuIdx < 0 {
+		t.Fatalf("expected ПРОБЛЕМЫ and CPU in view:\n%s", view)
 	}
 	if probIdx > cpuIdx {
 		t.Errorf("expected ПРОБЛЕМЫ (%d) before CPU (%d)", probIdx, cpuIdx)
 	}
 }
 
-// TestProblemsPanelHiddenWhenNoIssues — Given a wide layout with no issues,
+// TestProblemsPanelHiddenWhenNoIssues — Given no issues,
 // When the dashboard renders, Then no ПРОБЛЕМЫ panel appears (no empty block).
 func TestProblemsPanelHiddenWhenNoIssues(t *testing.T) {
-	// Given: a wide dashboard whose server has no issues.
+	// Given: a dashboard whose server has no issues.
 	m := dashboardWorkspaceFixture()
 	m.layout = newLayout(160, 50)
 	m.snapshot.Issues = nil
@@ -207,14 +304,4 @@ func TestProblemsPanelHiddenWhenNoIssues(t *testing.T) {
 	if strings.Contains(view, "ПРОБЛЕМЫ") {
 		t.Fatalf("ПРОБЛЕМЫ panel should be hidden when there are no issues:\n%s", view)
 	}
-}
-
-// containsBlank returns true if any row in rows is empty.
-func containsBlank(rows []string) bool {
-	for _, r := range rows {
-		if r == "" {
-			return true
-		}
-	}
-	return false
 }

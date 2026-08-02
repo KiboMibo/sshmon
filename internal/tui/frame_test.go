@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func TestViewWrapsScreenInRoundedFrame(t *testing.T) {
+func TestViewDrawsNoOuterFrameAndFitsTerminal(t *testing.T) {
 	// Given Fleet on a normal terminal.
 	m := Model{screen: screenFleet, snapshot: snapshotWithServers("web")}
 	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -16,15 +16,14 @@ func TestViewWrapsScreenInRoundedFrame(t *testing.T) {
 	// When the view is rendered.
 	view := m.View()
 
-	// Then the rounded frame surrounds the screen and nothing overflows the terminal width.
-	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
-		if !strings.Contains(view, glyph) {
-			t.Fatalf("view misses frame glyph %q:\n%s", glyph, view)
-		}
-	}
+	// Then the screen occupies the terminal itself: no frame column on the left
+	// and nothing overflows the terminal width.
 	for i, line := range strings.Split(view, "\n") {
 		if width := lipgloss.Width(line); width > 80 {
 			t.Fatalf("line %d width = %d > 80: %q", i, width, line)
+		}
+		if strings.HasPrefix(line, "╭") || strings.HasPrefix(line, "│") || strings.HasPrefix(line, "╰") {
+			t.Fatalf("line %d still starts with an outer frame: %q", i, line)
 		}
 	}
 }
@@ -37,17 +36,13 @@ func TestViewFillsTerminalHeight(t *testing.T) {
 	// When the view is rendered.
 	view := m.View()
 
-	// Then the frame stretches to the full terminal height.
-	lines := strings.Split(view, "\n")
-	if len(lines) != 24 {
+	// Then the screen stretches to the full terminal height.
+	if lines := strings.Split(view, "\n"); len(lines) != 24 {
 		t.Fatalf("view has %d lines, want 24:\n%s", len(lines), view)
-	}
-	if !strings.Contains(lines[len(lines)-1], "╰") {
-		t.Fatalf("last line is not the bottom border: %q", lines[len(lines)-1])
 	}
 }
 
-func TestFleetHintsStayAboveBottomBorder(t *testing.T) {
+func TestFleetHintsStayOnTheLastRow(t *testing.T) {
 	// Given Fleet on a full-height terminal.
 	m := Model{screen: screenFleet, snapshot: snapshotWithServers("web")}
 	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -55,23 +50,23 @@ func TestFleetHintsStayAboveBottomBorder(t *testing.T) {
 	// When the view is rendered.
 	view := m.View()
 
-	// Then Fleet hints occupy the final content row.
-	assertFooterAboveBottomBorder(t, view, 24, "enter открыть")
+	// Then Fleet hints occupy the final row.
+	assertFooterIsLastLine(t, view, 24, "enter открыть")
 }
 
-func TestDashboardHintsStayAboveBottomBorder(t *testing.T) {
-	// Given Dashboard on a narrow full-height terminal (wide mode moves hints into panel borders).
+func TestDashboardHintsStayOnTheLastRow(t *testing.T) {
+	// Given Dashboard on a full-height terminal.
 	m := Model{screen: screenDashboard, snapshot: snapshotWithServers("web")}
 	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	// When the view is rendered.
 	view := m.View()
 
-	// Then Dashboard hints occupy the final content row.
-	assertFooterAboveBottomBorder(t, view, 24, "r переподключить")
+	// Then Dashboard hints occupy the final row.
+	assertFooterIsLastLine(t, view, 24, "r обновить")
 }
 
-func TestDeepScreenHintsStayAboveBottomBorder(t *testing.T) {
+func TestDeepScreenHintsStayOnTheLastRow(t *testing.T) {
 	// Given a process screen on a full-height terminal.
 	m := Model{screen: screenProcesses, snapshot: snapshotWithServers("web")}
 	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -79,11 +74,27 @@ func TestDeepScreenHintsStayAboveBottomBorder(t *testing.T) {
 	// When the view is rendered.
 	view := m.View()
 
-	// Then deep-screen hints occupy the final content row.
-	assertFooterAboveBottomBorder(t, view, 24, "esc назад")
+	// Then deep-screen hints occupy the final row.
+	assertFooterIsLastLine(t, view, 24, "esc назад")
 }
 
-func TestOverlayKeepsHintsAboveBottomBorder(t *testing.T) {
+func TestLogsHintsStayOnTheLastRow(t *testing.T) {
+	// Given: полноэкранные логи на терминале полной высоты.
+	m := Model{screen: screenLogs, snapshot: snapshotWithServers("web"), logs: newLogsScreen()}
+	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	for i := range 40 {
+		m.logs.buffer.Append("19:41:0" + string(rune('0'+i%10)) + " info строка")
+	}
+	m.logs.refresh()
+
+	// When: кадр отрисован.
+	view := m.View()
+
+	// Then: кадр ровно по высоте терминала, подсказки — на последней строке.
+	assertFooterIsLastLine(t, view, 24, "esc закрыть")
+}
+
+func TestOverlayKeepsHintsOnTheLastRow(t *testing.T) {
 	// Given Help open over Fleet on a full-height terminal.
 	m := Model{screen: screenFleet, snapshot: snapshotWithServers("web")}
 	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -92,14 +103,14 @@ func TestOverlayKeepsHintsAboveBottomBorder(t *testing.T) {
 	// When the view is rendered.
 	view := m.View()
 
-	// Then Help stays visible while Fleet hints remain on the final content row.
+	// Then Help stays visible while Fleet hints remain on the final row.
 	if !strings.Contains(view, "КЛАВИШИ") {
 		t.Fatalf("view misses help overlay:\n%s", view)
 	}
-	assertFooterAboveBottomBorder(t, view, 24, "enter открыть")
+	assertFooterIsLastLine(t, view, 24, "enter открыть")
 }
 
-func TestOverlayRendersInsideFrame(t *testing.T) {
+func TestOverlayStaysInsideTerminalHeight(t *testing.T) {
 	// Given an open help overlay on a normal terminal.
 	m := Model{screen: screenFleet, snapshot: snapshotWithServers("web")}
 	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -108,7 +119,7 @@ func TestOverlayRendersInsideFrame(t *testing.T) {
 	// When the view is rendered.
 	view := m.View()
 
-	// Then the overlay stays inside the full-height frame.
+	// Then the overlay neither pushes the screen past the terminal nor overflows it.
 	if !strings.Contains(view, "КЛАВИШИ") {
 		t.Fatalf("view misses help overlay:\n%s", view)
 	}
@@ -116,8 +127,10 @@ func TestOverlayRendersInsideFrame(t *testing.T) {
 	if len(lines) != 24 {
 		t.Fatalf("view with overlay has %d lines, want 24:\n%s", len(lines), view)
 	}
-	if !strings.Contains(lines[len(lines)-1], "╰") {
-		t.Fatalf("overlay leaked below the frame, last line: %q", lines[len(lines)-1])
+	for i, line := range lines {
+		if width := lipgloss.Width(line); width > 80 {
+			t.Fatalf("overlay line %d width = %d > 80: %q", i, width, line)
+		}
 	}
 }
 
@@ -138,16 +151,13 @@ func TestTooSmallGateRendersWithoutFrame(t *testing.T) {
 	}
 }
 
-func assertFooterAboveBottomBorder(t *testing.T, view string, height int, footer string) {
+func assertFooterIsLastLine(t *testing.T, view string, height int, footer string) {
 	t.Helper()
 	lines := strings.Split(view, "\n")
 	if len(lines) != height {
 		t.Fatalf("view has %d lines, want %d:\n%s", len(lines), height, view)
 	}
-	if !strings.Contains(lines[len(lines)-2], footer) {
-		t.Fatalf("last content row misses %q: %q", footer, lines[len(lines)-2])
-	}
-	if !strings.Contains(lines[len(lines)-1], "╰") {
-		t.Fatalf("last line is not the bottom border: %q", lines[len(lines)-1])
+	if !strings.Contains(lines[len(lines)-1], footer) {
+		t.Fatalf("last row misses %q: %q", footer, lines[len(lines)-1])
 	}
 }
