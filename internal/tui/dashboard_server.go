@@ -111,8 +111,7 @@ func (m Model) serverBodyColumns(server collect.Metrics, width, budget int, unit
 	right := m.tilePanel(tileSystemd, m.servicesTitle(), "f фильтр · j/k · enter journal", rightWidth,
 		fitPanelHeight(units, servicesHeight-panelOverhead, m.systemdScroll(servicesHeight-panelOverhead)))
 	if portsHeight > 0 {
-		right = append(right, panelBox(portsTitle(server), "o порты", rightWidth,
-			fitPanelHeight(ports, portsHeight-panelOverhead, 0))...)
+		right = append(right, m.portsPanel(server, ports, rightWidth, portsHeight)...)
 	}
 
 	left := m.tilePanel(tileDocker, m.dockerTitle(), "d контейнеры", dockerWidth,
@@ -162,9 +161,18 @@ func (m Model) serverBodyStacked(server collect.Metrics, width, budget int, unit
 	body = append(body, m.tilePanel(tileSystemd, m.servicesTitle(), "f фильтр · j/k · enter journal", width,
 		fitPanelHeight(units, servicesHeight-panelOverhead, m.systemdScroll(servicesHeight-panelOverhead)))...)
 	if portsHeight > 0 {
-		body = append(body, panelBox(portsTitle(server), "o порты", width, fitPanelHeight(ports, portsHeight-panelOverhead, 0))...)
+		body = append(body, m.portsPanel(server, ports, width, portsHeight)...)
 	}
 	return append(body, m.serverLogsPanel(width, budget-len(body))...), truncated
+}
+
+// portsPanel — плитка ПОРТЫ в обеих раскладках: она входит в обход фокуса, а
+// значит обязана и подсвечивать рамку, и прокручиваться j/k. Прокрутка идёт по
+// строкам многоколоночной раскладки, а не по записям: колонки читаются сверху
+// вниз, и шаг «на одну запись» уводил бы список на треть экрана.
+func (m Model) portsPanel(server collect.Metrics, ports []string, width, height int) []string {
+	return m.tilePanel(tilePorts, portsTitle(server), "o порты", width,
+		fitPanelHeight(ports, height-panelOverhead, m.dashboard.tileScrolls[tilePorts]))
 }
 
 // serverBodyCompact — аварийная раскладка для терминала, где высоты на плитки

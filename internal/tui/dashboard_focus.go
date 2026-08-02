@@ -14,6 +14,7 @@ import (
 const (
 	tileSystemd uint8 = iota
 	tileDocker
+	tilePorts
 	tileLogs
 	numDashboardTiles
 )
