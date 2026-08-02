@@ -151,24 +151,26 @@ func TestFleetColumnsAppearOnlyWithDetailsAndDegrade(t *testing.T) {
 	// Given the list mode and the details mode at the same width.
 	plain := fleetColumnLayout(120, false)
 	detailed := fleetColumnLayout(120, true)
-	// Then uptime and docker belong to the details mode only.
-	if plain.uptime || plain.docker {
+	// Then uptime belongs to the details mode only.
+	if plain.uptime {
 		t.Fatalf("list mode shows extra columns: %+v", plain)
 	}
-	if !detailed.uptime || !detailed.docker {
+	if !detailed.uptime {
 		t.Fatalf("details mode misses columns: %+v", detailed)
 	}
-	if !strings.Contains(detailed.header(), "UPTIME") || strings.Contains(plain.header(), "DOCKER") {
+	if !strings.Contains(detailed.header(), "UPTIME") || strings.Contains(plain.header(), "UPTIME") {
 		t.Fatalf("headers = %q / %q", detailed.header(), plain.header())
 	}
-	// And on a narrow terminal the extra columns leave first, docker before uptime.
-	narrow := fleetColumnLayout(70, true)
-	if narrow.docker || !narrow.uptime {
-		t.Fatalf("narrow details layout = %+v", narrow)
+	// И: колонки DOCKER нет ни в одном режиме — счётчики ушли в сайдбар.
+	for _, cols := range []fleetColumns{plain, detailed} {
+		if strings.Contains(cols.header(), "DOCKER") {
+			t.Fatalf("колонка DOCKER осталась в таблице: %q", cols.header())
+		}
 	}
-	// На 60 колонках уходят обе: DISK принадлежит базовому набору и остаётся.
+	narrow := fleetColumnLayout(70, true)
+	// На 60 колонках уходит и UPTIME: DISK принадлежит базовому набору и остаётся.
 	tight := fleetColumnLayout(60, true)
-	if tight.docker || tight.uptime {
+	if tight.uptime {
 		t.Fatalf("tight details layout = %+v", tight)
 	}
 	if !strings.Contains(tight.header(), "DISK") {
@@ -207,7 +209,7 @@ func TestFleetTableFillsPanelWidth(t *testing.T) {
 				row := strings.Repeat(" ", len([]rune(fleetMarker))) +
 					// Значения ячеек различны нарочно: columnEnd ищет первое
 					// вхождение, и «96%» из колонки СОСТ перебило бы MEM.
-					cols.row("vm-prod-emarb", "⚠ память 96%", "2%", "94%", "88%", "0.79", "1718д", "●7 ○2 ⚠1")
+					cols.row("vm-prod-emarb", "⚠ память 96%", "2%", "94%", "88%", "0.79", "1718д")
 
 				// Then: обе строки ровно по ширине панели и колонки совпадают.
 				if got := lipgloss.Width(header); got != width {
@@ -322,39 +324,49 @@ func TestFleetDiskColumnPrefersRootPartition(t *testing.T) {
 	}
 }
 
-// TestFleetDockerColumnTellsThreeStates — Дано: три хоста в разном состоянии
-// docker'а; Тогда: колонка различает «не ответил», «контейнеров нет» и живые
-// счётчики — тем же видом «●7 ○2 ⚠1», что заголовок плитки экрана сервера.
-func TestFleetDockerColumnTellsThreeStates(t *testing.T) {
+// TestFleetSidebarTellsDockerStates — Дано: хосты в разном состоянии docker'а;
+// Когда: хост выбран и виден сайдбар; Тогда: раздел DOCKER различает «не
+// ответил», «контейнеров нет» и живые счётчики теми же словами, что карточка,
+// а колонки DOCKER в таблице больше нет ни в одном режиме.
+func TestFleetSidebarTellsDockerStates(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		counts collect.DockerCounts
-		want   string
+		want   []string
 	}{
-		{"docker не ответил", collect.DockerCounts{}, "—"},
-		{"контейнеров нет", collect.DockerCounts{Known: true}, "●0"},
-		{"контейнеры есть", collect.DockerCounts{Running: 7, Stopped: 2, Broken: 1, Known: true}, "●7 ○2 ⚠1"},
+		{"docker не ответил", collect.DockerCounts{}, []string{"docker недоступен"}},
+		{"контейнеров нет", collect.DockerCounts{Known: true}, []string{"контейнеров нет"}},
+		{"контейнеры есть", collect.DockerCounts{Running: 7, Stopped: 2, Broken: 1, Known: true},
+			[]string{"● 7 запущено", "○ 2 остановлено", "⚠ 1 проблемный"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := dockerCell(tc.counts); got != tc.want {
-				t.Fatalf("dockerCell(%+v) = %q, want %q", tc.counts, got, tc.want)
+			snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
+				{Name: "db", Group: "main", Online: true, Time: time.Now(), Docker: tc.counts},
+			}}
+			m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(200, 40)}
+			view := stripANSI(m.View())
+			if !strings.Contains(view, "DOCKER") {
+				t.Fatalf("раздела DOCKER нет в сайдбаре:\n%s", view)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(view, want) {
+					t.Fatalf("сайдбар не сказал %q:\n%s", want, view)
+				}
+			}
+			// И: счётчики стоят между «что не так» и «топом по памяти».
+			if issues, docker, top := strings.Index(view, "ЧТО НЕ ТАК"), strings.Index(view, "DOCKER"), strings.Index(view, "ТОП ПО ПАМЯТИ"); !(issues < docker && docker < top) {
+				t.Fatalf("порядок разделов сайдбара сбит: %d/%d/%d\n%s", issues, docker, top, view)
 			}
 		})
 	}
-	// И: счётчики доезжают до строки списка из снапшота, а не только из
-	// диагностики выбранного хоста.
+	// И: в самой таблице колонки DOCKER нет даже в режиме деталей.
 	snapshot := collect.Snapshot{Time: time.Now(), Servers: []collect.Metrics{
-		{Name: "kava", Group: "main", Online: true, Time: time.Now()},
-		{Name: "db", Group: "main", Online: true, Time: time.Now(), Docker: collect.DockerCounts{Running: 7, Stopped: 2, Known: true}},
+		{Name: "db", Group: "main", Online: true, Time: time.Now(), Docker: collect.DockerCounts{Running: 7, Known: true}},
 	}}
 	m := Model{screen: screenFleet, snapshot: snapshot, fleet: newFleetModel(), layout: newLayout(80, 30)}
 	m, _ = updateModel(t, m, key("right"))
-	view := stripANSI(m.View())
-	if !strings.Contains(view, "DOCKER") {
-		t.Fatalf("колонки DOCKER нет в режиме деталей:\n%s", view)
-	}
-	if row := fleetRowOf(t, view, "db"); !strings.Contains(row, "●7 ○2") {
-		t.Fatalf("счётчики контейнеров не дошли до невыбранной строки: %q", row)
+	if view := stripANSI(m.View()); strings.Contains(view, "DOCKER") {
+		t.Fatalf("колонка DOCKER осталась в таблице:\n%s", view)
 	}
 }
 

@@ -35,6 +35,12 @@ func (m Model) fleetDetailContent(width int) []string {
 		titleStyle.Render("ЧТО НЕ ТАК"),
 	}
 	lines = append(lines, fleetIssueLines(server, issues, width)...)
+	// DOCKER стоит сразу за «что не так» и выше «топа по памяти»: это тоже
+	// разбор состояния хоста, и приходит он из снапшота — мгновенно, тогда как
+	// топ ждёт ответа `ps` и в первые секунды показывает «загрузка…». Раздел,
+	// который мигает, ниже раздела, который готов сразу.
+	lines = append(lines, "", titleStyle.Render("DOCKER"))
+	lines = append(lines, m.fleetDockerLines(server, width)...)
 	lines = append(lines, "", titleStyle.Render("ТОП ПО ПАМЯТИ"))
 	lines = append(lines, m.fleetTopMemoryLines(server, width)...)
 	lines = append(lines,
@@ -43,6 +49,23 @@ func (m Model) fleetDetailContent(width int) []string {
 		dimStyle.Render("enter детали    l логи"),
 		dimStyle.Render("p процессы      x ssh"),
 	)
+	return lines
+}
+
+// fleetDockerLines — счётчики контейнеров выбранного хоста, по строке на
+// счётчик: колонка сайдбара вчетверо уже списка, и «● 12 запущено ○ 3
+// остановлено ⚠ 1 проблемный» одной строкой в неё не помещается. Когда считать
+// нечего, на месте счётчиков стоит причина — «docker недоступен» отличается от
+// «контейнеров нет», и раньше эту разницу съедал прочерк в колонке таблицы.
+func (m Model) fleetDockerLines(server collect.Metrics, width int) []string {
+	parts := dockerCountParts(server.Docker)
+	if len(parts) == 0 {
+		return []string{dimStyle.Render(fitLine(m.dockerEmptyText(server), width))}
+	}
+	lines := make([]string, 0, len(parts))
+	for _, part := range parts {
+		lines = append(lines, fitLine(part, width))
+	}
 	return lines
 }
 

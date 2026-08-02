@@ -130,9 +130,21 @@ func netTail(rates []collect.NetRate) string {
 }
 
 func (m Model) dockerText(server collect.Metrics) string {
-	d := server.Docker
-	if d.Total() == 0 {
+	parts := dockerCountParts(server.Docker)
+	if len(parts) == 0 {
 		return dimStyle.Render(m.dockerEmptyText(server))
+	}
+	return strings.Join(parts, "  ")
+}
+
+// dockerCountParts — счётчики контейнеров по одной формулировке на часть.
+// Отдельно от dockerText, потому что сайдбар флота ставит те же счётчики
+// строкой на каждый: в колонку шириной с четверть экрана они одной строкой не
+// влезают, а вторая формулировка тех же чисел разошлась бы с карточкой.
+// Пустой результат означает «считать нечего» — причину назовёт dockerEmptyText.
+func dockerCountParts(d collect.DockerCounts) []string {
+	if d.Total() == 0 {
+		return nil
 	}
 	parts := []string{goodStyle.Render(fmt.Sprintf("● %d запущено", d.Running))}
 	if d.Stopped > 0 {
@@ -141,7 +153,7 @@ func (m Model) dockerText(server collect.Metrics) string {
 	if d.Broken > 0 {
 		parts = append(parts, warnStyle.Render(fmt.Sprintf("⚠ %d %s", d.Broken, plural(d.Broken, "проблемный", "проблемных", "проблемных"))))
 	}
-	return strings.Join(parts, "  ")
+	return parts
 }
 
 // dockerEmptyText — почему в карточке не видно ни одного контейнера. Точную
