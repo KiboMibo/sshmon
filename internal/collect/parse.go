@@ -18,7 +18,11 @@ const sampleCmd = `echo @@HOST; hostname 2>/dev/null; ` +
 	`echo @@NET; cat /proc/net/dev; ` +
 	`echo @@DF; df -kP 2>/dev/null; ` +
 	`echo @@PORTS; ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null; ` +
-	`echo @@DOCKER; docker ps -a --format '{{.Status}}' 2>/dev/null`
+	// `command -v docker` и маркер, как в diagnostics.go: без них пустой ответ
+	// от хоста без docker'а неотличим от «контейнеров нет». Ветка `|| echo`
+	// ловит и отказ самого docker'а (нет прав, демон молчит) — там счётчиков
+	// тоже нет. Заодно последняя команда сэмпла всегда выходит с нулём.
+	`echo @@DOCKER; command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Status}}' 2>/dev/null || echo ` + unsupportedMarker
 
 // sampleCmdWithOS — тот же сэмпл плюс /etc/os-release. Шлём его один раз на
 // сервер: дистрибутив не меняется, а лишний cat на каждом тике не нужен — в том
@@ -196,9 +200,14 @@ func parseSample(raw string, at time.Time) *sample {
 	}
 	s.os = SanitizeLine(parseOSRelease(sec["OS"]))
 	s.ports, _ = ParsePorts(strings.Join(sec["PORTS"], "\n"))
-	for _, ln := range sec["DOCKER"] {
-		if ln = strings.TrimSpace(ln); ln != "" {
-			s.docker.CountContainerStatus(ln)
+	// Секцию читаем только целиком: её отсутствие (оборванный вывод, хост со
+	// старой версией команды) — это «неизвестно», а не «контейнеров нет».
+	if lines, ok := sec["DOCKER"]; ok && !hasUnsupportedMarker(strings.Join(lines, "\n")) {
+		s.docker.Known = true
+		for _, ln := range lines {
+			if ln = strings.TrimSpace(ln); ln != "" {
+				s.docker.CountContainerStatus(ln)
+			}
 		}
 	}
 	return s

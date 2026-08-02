@@ -61,6 +61,12 @@ type DockerCounts struct {
 	Running int
 	Stopped int
 	Broken  int
+	// Known — счётчики действительно собраны: docker на хосте есть и ответил.
+	// «Контейнеров нет» и «docker недоступен» дают одинаковые нули, но это
+	// разные факты: первый — норма, второй — повод не искать контейнеры глазами.
+	// Нулевое значение поля означает «неизвестно», поэтому offline-хост и
+	// сервер до первого опроса сами собой попадают в прочерк.
+	Known bool
 }
 
 func (d DockerCounts) Total() int { return d.Running + d.Stopped + d.Broken }

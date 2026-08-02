@@ -1,6 +1,7 @@
 package collect
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -111,6 +112,52 @@ func TestParseOSRelease(t *testing.T) {
 				t.Errorf("parseOSRelease = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestParseSampleSeparatesDockerStates — Дано: три ответа секции @@DOCKER;
+// Когда: сэмпл разобран; Тогда: «docker не ответил», «контейнеров нет» и
+// «контейнеры есть» различимы, а не сливаются в одинаковые нули.
+func TestParseSampleSeparatesDockerStates(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		section string
+		want    DockerCounts
+	}{
+		{"docker недоступен", unsupportedMarker + "\n", DockerCounts{}},
+		{"контейнеров нет", "\n", DockerCounts{Known: true}},
+		{
+			"контейнеры есть",
+			"Up 3 days\nUp 2 hours (unhealthy)\nExited (0) 5 minutes ago\nCreated\nRestarting (1) 2 seconds ago\n",
+			DockerCounts{Running: 2, Stopped: 2, Broken: 1, Known: true},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := parseSample(rawFixture+"@@DOCKER\n"+tc.section, time.Unix(1000, 0))
+			if s.docker != tc.want {
+				t.Errorf("docker = %+v, want %+v", s.docker, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseSampleWithoutDockerSectionStaysUnknown — Дано: сэмпл без секции
+// @@DOCKER (оборванный вывод); Тогда: счётчики остаются неизвестными, а не
+// выдают себя за «контейнеров нет».
+func TestParseSampleWithoutDockerSectionStaysUnknown(t *testing.T) {
+	if s := parseSample(rawFixture, time.Unix(1000, 0)); s.docker.Known {
+		t.Errorf("docker = %+v, want Known=false", s.docker)
+	}
+}
+
+// TestSampleCmdSurvivesHostsWithoutDocker — Дано: команда сэмпла; Тогда: она
+// проверяет наличие docker'а и всегда заканчивается нулевым кодом, иначе хост
+// без docker'а выглядел бы недоступным.
+func TestSampleCmdSurvivesHostsWithoutDocker(t *testing.T) {
+	for _, want := range []string{"command -v docker", "|| echo " + unsupportedMarker} {
+		if !strings.Contains(sampleCmd, want) {
+			t.Fatalf("команда сэмпла без %q: %s", want, sampleCmd)
+		}
 	}
 }
 
