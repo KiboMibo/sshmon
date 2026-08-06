@@ -19,7 +19,7 @@ const (
 )
 
 func (c *Collector) Processes(ctx context.Context, server string) ([]Process, error) {
-	client, err := c.clientFor(server)
+	client, err := c.runnerFor(server)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +31,7 @@ func (c *Collector) Processes(ctx context.Context, server string) ([]Process, er
 }
 
 func (c *Collector) Containers(ctx context.Context, server string) ([]Container, error) {
-	client, err := c.clientFor(server)
+	client, err := c.runnerFor(server)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func (c *Collector) Containers(ctx context.Context, server string) ([]Container,
 }
 
 func (c *Collector) Ports(ctx context.Context, server string) ([]Port, error) {
-	client, err := c.clientFor(server)
+	client, err := c.runnerFor(server)
 	if err != nil {
 		return nil, err
 	}
@@ -59,6 +59,17 @@ func (c *Collector) Ports(ctx context.Context, server string) ([]Port, error) {
 		return nil, err
 	}
 	return ParsePorts(raw)
+}
+
+// runnerFor — тот же клиент сервера, но за интерфейсом pollRunner. Диагностике
+// хватает RunContext, а через интерфейс её можно опросить без живого SSH;
+// clientFor остаётся для StreamLogs, которому нужен StreamContext.
+func (c *Collector) runnerFor(server string) (pollRunner, error) {
+	state, err := c.stateByName(server)
+	if err != nil {
+		return nil, err
+	}
+	return state.runner, nil
 }
 
 func (c *Collector) clientFor(server string) (*sshx.Client, error) {
