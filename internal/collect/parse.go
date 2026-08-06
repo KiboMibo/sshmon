@@ -76,59 +76,114 @@ func sections(raw string) map[string][]string {
 var partRe = regexp.MustCompile(`^(sd[a-z]+|vd[a-z]+|xvd[a-z]+|hd[a-z]+)\d+$|^(nvme\d+n\d+|mmcblk\d+)p\d+$`)
 var skipFs = map[string]bool{"tmpfs": true, "devtmpfs": true, "udev": true, "none": true, "shm": true, "overlay": true}
 
+// sectionParsers — по разборщику на секцию сэмпла. Диспетчер parseSample берёт
+// разборщик отсюда, поэтому новая секция добавляется своей функцией и строкой в
+// таблице, а не веткой в общем разборе. Секции независимы (каждая пишет свои
+// поля sample), так что порядок обхода на результат не влияет.
+var sectionParsers = map[string]func(*sample, []string){
+	"HOST":   parseHostSection,
+	"UP":     parseUptimeSection,
+	"LOAD":   parseLoadSection,
+	"CPU":    parseCPUSection,
+	"MEM":    parseMemSection,
+	"DISK":   parseDiskStatsSection,
+	"NET":    parseNetSection,
+	"DF":     parseDFSection,
+	"OS":     parseOSSection,
+	"PORTS":  parsePortsSection,
+	"DOCKER": parseDockerSection,
+}
+
 func parseSample(raw string, at time.Time) *sample {
-	sec := sections(raw)
 	s := &sample{}
 	s.c.at = at
 	s.c.diskR, s.c.diskW = map[string]uint64{}, map[string]uint64{}
 	s.c.netRx, s.c.netTx = map[string]uint64{}, map[string]uint64{}
+	for name, lines := range sections(raw) {
+		// Пропавшая секция — это «неизвестно», и разборщик для неё не зовём:
+		// нулевые поля sample уже означают ровно это.
+		if parse, ok := sectionParsers[name]; ok {
+			parse(s, lines)
+		}
+	}
+	return s
+}
 
-	if h := sec["HOST"]; len(h) > 0 {
-		// Всё, что ниже приходит из вывода команд на удалённом хосте и попадает
-		// на экран как текст: имя хоста, дистрибутив, имена ФС, точек монтирования,
-		// дисков и интерфейсов. Чистим на разборе — дальше это уже данные модели.
-		s.hostname = SanitizeLine(strings.TrimSpace(h[0]))
+// Всё, что приходит из вывода команд на удалённом хосте, попадает на экран как
+// текст: имя хоста, дистрибутив, имена ФС, точек монтирования, дисков и
+// интерфейсов. Чистим на разборе — дальше это уже данные модели.
+func parseHostSection(s *sample, lines []string) {
+	if len(lines) > 0 {
+		s.hostname = SanitizeLine(strings.TrimSpace(lines[0]))
 	}
-	if u := sec["UP"]; len(u) > 0 {
-		if f := strings.Fields(u[0]); len(f) > 0 {
-			if v, err := strconv.ParseFloat(f[0], 64); err == nil {
-				s.uptime = time.Duration(v * float64(time.Second))
-			}
-		}
+}
+
+func parseUptimeSection(s *sample, lines []string) {
+	if len(lines) == 0 {
+		return
 	}
-	if l := sec["LOAD"]; len(l) > 0 {
-		if f := strings.Fields(l[0]); len(f) >= 3 {
-			s.load1, _ = strconv.ParseFloat(f[0], 64)
-			s.load5, _ = strconv.ParseFloat(f[1], 64)
-			s.load15, _ = strconv.ParseFloat(f[2], 64)
-		}
+	f := strings.Fields(lines[0])
+	if len(f) == 0 {
+		return
 	}
-	for _, ln := range sec["CPU"] {
+	if v, err := strconv.ParseFloat(f[0], 64); err == nil {
+		s.uptime = time.Duration(v * float64(time.Second))
+	}
+}
+
+func parseLoadSection(s *sample, lines []string) {
+	if len(lines) == 0 {
+		return
+	}
+	f := strings.Fields(lines[0])
+	if len(f) < 3 {
+		return
+	}
+	s.load1, _ = strconv.ParseFloat(f[0], 64)
+	s.load5, _ = strconv.ParseFloat(f[1], 64)
+	s.load15, _ = strconv.ParseFloat(f[2], 64)
+}
+
+func parseCPUSection(s *sample, lines []string) {
+	for _, ln := range lines {
 		f := strings.Fields(ln)
 		if len(f) < 5 || !strings.HasPrefix(f[0], "cpu") {
 			continue
 		}
 		if f[0] == "cpu" {
-			var vals []uint64
-			for _, x := range f[1:] {
-				v, _ := strconv.ParseUint(x, 10, 64)
-				vals = append(vals, v)
-			}
-			for i, v := range vals {
-				if i < 8 {
-					s.c.cpuTotal += v
-				}
-			}
-			if len(vals) > 4 {
-				s.c.cpuIdle = vals[3] + vals[4]
-			} else if len(vals) > 3 {
-				s.c.cpuIdle = vals[3]
-			}
+			total, idle := cpuTotals(f[1:])
+			s.c.cpuTotal += total
+			s.c.cpuIdle = idle
 		} else {
 			s.c.ncpu++
 		}
 	}
-	for _, ln := range sec["MEM"] {
+}
+
+// cpuTotals складывает первые восемь колонок строки «cpu» из /proc/stat и
+// отдельно выделяет простой: idle+iowait, а на ядрах без колонки iowait — один
+// idle. Дальше восьмой идут guest-колонки, уже учтённые внутри user/nice.
+func cpuTotals(fields []string) (total, idle uint64) {
+	var vals []uint64
+	for _, x := range fields {
+		v, _ := strconv.ParseUint(x, 10, 64)
+		vals = append(vals, v)
+	}
+	for i, v := range vals {
+		if i < 8 {
+			total += v
+		}
+	}
+	if len(vals) > 4 {
+		idle = vals[3] + vals[4]
+	} else if len(vals) > 3 {
+		idle = vals[3]
+	}
+	return
+}
+
+func parseMemSection(s *sample, lines []string) {
+	for _, ln := range lines {
 		f := strings.Fields(ln)
 		if len(f) < 2 {
 			continue
@@ -149,22 +204,34 @@ func parseSample(raw string, at time.Time) *sample {
 			s.swapFree = v
 		}
 	}
-	for _, ln := range sec["DISK"] {
+}
+
+func parseDiskStatsSection(s *sample, lines []string) {
+	for _, ln := range lines {
 		f := strings.Fields(ln)
 		if len(f) < 10 {
 			continue
 		}
 		name := SanitizeLine(f[2])
-		if strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "ram") ||
-			strings.HasPrefix(name, "zram") || strings.HasPrefix(name, "dm-") ||
-			partRe.MatchString(name) {
+		if skipBlockDev(name) {
 			continue
 		}
 		r, _ := strconv.ParseUint(f[5], 10, 64)
 		w, _ := strconv.ParseUint(f[9], 10, 64)
 		s.c.diskR[name], s.c.diskW[name] = r, w
 	}
-	for _, ln := range sec["NET"] {
+}
+
+// skipBlockDev отсеивает виртуальные устройства и разделы: раздел показывает
+// тот же ввод-вывод, что и его диск, и в сумме он был бы учтён дважды.
+func skipBlockDev(name string) bool {
+	return strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "ram") ||
+		strings.HasPrefix(name, "zram") || strings.HasPrefix(name, "dm-") ||
+		partRe.MatchString(name)
+}
+
+func parseNetSection(s *sample, lines []string) {
+	for _, ln := range lines {
 		if !strings.Contains(ln, ":") {
 			continue
 		}
@@ -181,7 +248,10 @@ func parseSample(raw string, at time.Time) *sample {
 		tx, _ := strconv.ParseUint(f[8], 10, 64)
 		s.c.netRx[iface], s.c.netTx[iface] = rx, tx
 	}
-	for _, ln := range sec["DF"] {
+}
+
+func parseDFSection(s *sample, lines []string) {
+	for _, ln := range lines {
 		f := strings.Fields(ln)
 		if len(f) < 6 || f[0] == "Filesystem" || skipFs[f[0]] {
 			continue
@@ -198,19 +268,29 @@ func parseSample(raw string, at time.Time) *sample {
 			UsedPct: 100 * float64(used) / float64(total),
 		})
 	}
-	s.os = SanitizeLine(parseOSRelease(sec["OS"]))
-	s.ports, _ = ParsePorts(strings.Join(sec["PORTS"], "\n"))
-	// Секцию читаем только целиком: её отсутствие (оборванный вывод, хост со
-	// старой версией команды) — это «неизвестно», а не «контейнеров нет».
-	if lines, ok := sec["DOCKER"]; ok && !hasUnsupportedMarker(strings.Join(lines, "\n")) {
-		s.docker.Known = true
-		for _, ln := range lines {
-			if ln = strings.TrimSpace(ln); ln != "" {
-				s.docker.CountContainerStatus(ln)
-			}
+}
+
+func parseOSSection(s *sample, lines []string) {
+	s.os = SanitizeLine(parseOSRelease(lines))
+}
+
+func parsePortsSection(s *sample, lines []string) {
+	s.ports, _ = ParsePorts(strings.Join(lines, "\n"))
+}
+
+// parseDockerSection читает секцию только целиком: маркер вместо списка — это
+// «docker не спросили» (нет бинаря, нет прав, демон молчит), и счётчики тогда
+// остаются неизвестными, а не нулевыми.
+func parseDockerSection(s *sample, lines []string) {
+	if hasUnsupportedMarker(strings.Join(lines, "\n")) {
+		return
+	}
+	s.docker.Known = true
+	for _, ln := range lines {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			s.docker.CountContainerStatus(ln)
 		}
 	}
-	return s
 }
 
 // parseOSRelease собирает короткое имя дистрибутива из /etc/os-release:
