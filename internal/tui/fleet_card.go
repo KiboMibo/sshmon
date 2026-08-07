@@ -224,25 +224,3 @@ func (m Model) servicesText() string {
 	}
 	return tail
 }
-
-func containerCounts(items []collect.Container) string {
-	var up, exited, other int
-	for _, item := range items {
-		switch {
-		case strings.HasPrefix(item.Status, "Up"):
-			up++
-		case strings.HasPrefix(item.Status, "Exited"):
-			exited++
-		default:
-			other++
-		}
-	}
-	parts := []string{goodStyle.Render(fmt.Sprintf("● %d запущено", up))}
-	if exited > 0 {
-		parts = append(parts, dimStyle.Render(fmt.Sprintf("○ %d остановлено", exited)))
-	}
-	if other > 0 {
-		parts = append(parts, warnStyle.Render(fmt.Sprintf("⚠ %d %s", other, plural(other, "проблемный", "проблемных", "проблемных"))))
-	}
-	return strings.Join(parts, "  ")
-}

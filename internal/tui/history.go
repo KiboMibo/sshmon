@@ -15,6 +15,10 @@ import (
 type historyStatus uint8
 
 const (
+	// historyIdle по имени нигде не упоминается, но это нулевое значение
+	// historyStatus: именно в нём экран находится до первой загрузки. Убрать
+	// имя — значит сделать нулевым значением historyLoading и заявить загрузку,
+	// которой не было; замена на `_` тот же смысл спрятала бы.
 	historyIdle historyStatus = iota
 	historyLoading
 	historyReady
